@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MediaCenter" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/md_primary</item>
+        <item name="colorOnPrimary">@color/md_on_primary</item>
+        <item name="android:statusBarColor">@color/md_black</item>
+        <item name="android:navigationBarColor">@color/md_black</item>
+        <item name="android:windowBackground">@color/md_black</item>
+        <item name="android:textColorPrimary">@color/md_on_surface</item>
+    </style>
+
+    <style name="Theme.MediaCenter.Viewer" parent="Theme.MediaCenter">
+        <item name="android:windowBackground">@color/md_black</item>
+        <item name="android:statusBarColor">@color/md_black</item>
+    </style>
+
+    <style name="TextAppearance.MediaCenter.Title" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:textSize">22sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/md_on_surface</item>
+    </style>
+
+    <style name="Widget.MediaCenter.Chip" parent="Widget.Material3.Chip.Filter">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="chipMinHeight">34dp</item>
+        <item name="chipCornerRadius">17dp</item>
+        <item name="ensureMinTouchTargetSize">false</item>
+        <item name="chipStrokeWidth">0dp</item>
+    </style>
+</resources>

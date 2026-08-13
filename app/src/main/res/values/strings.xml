@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">媒体中心</string>
+    <string name="nav_browse">浏览</string>
+    <string name="nav_storage">内部存储</string>
+    <string name="cd_sidebar">侧栏</string>
+    <string name="folder_meta">%1$s | %2$d项</string>
+    <string name="file_meta">%1$s | %2$s</string>
+    <string name="filter_all">文件夹</string>
+    <string name="filter_image">图片</string>
+    <string name="filter_video">视频</string>
+    <string name="filter_web">网页</string>
+    <string name="filter_text">文本</string>
+    <string name="action_refresh">刷新</string>
+    <string name="action_sort">排序与视图</string>
+    <string name="sort_name">按名称排序</string>
+    <string name="sort_date">按时间排序</string>
+    <string name="sort_type">按类型排序</string>
+    <string name="view_list">列表视图</string>
+    <string name="view_grid">宫格视图</string>
+    <string name="action_add_folder">添加文件夹</string>
+    <string name="permission_title">需要访问全部文件</string>
+    <string name="permission_message">授权全部文件访问后，才能在文件夹里看到网页、文本和其它文件，并正常打开本地网页。</string>
+    <string name="permission_all_files">去开启全部文件访问</string>
+    <string name="permission_grant">授予权限</string>
+    <string name="empty_gallery">还没有可显示的文件</string>
+    <string name="empty_folders">还没有文件夹\n授权后会显示相册目录，也可以手动添加</string>
+    <string name="empty_need_folder">添加一个文件夹后，即可浏览其中的网页和文本</string>
+    <string name="empty_web">暂无网页文件</string>
+    <string name="empty_text">暂无文本文件</string>
+    <string name="empty_usb">已检测到U盘，授权后即可浏览里面的文件</string>
+    <string name="action_open_usb">打开U盘</string>
+    <string name="folder_count">%d 项</string>
+    <string name="text_truncated">文件较大，仅显示前 512KB</string>
+    <string name="cd_back">返回</string>
+    <string name="cd_badge">类型标记</string>
+    <string name="cd_folder">文件夹</string>
+    <string name="no_app_to_open">没有可以打开此文件的应用</string>
+</resources>
