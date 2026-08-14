@@ -16,19 +16,10 @@ open class BaseActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
     }
 
-    override fun setContentView(view: View) {
-        super.setContentView(view)
-        fitSystemBars(view)
-    }
-
-    override fun setContentView(layoutResID: Int) {
-        super.setContentView(layoutResID)
-        findViewById<View>(android.R.id.content)?.let(::fitSystemBars)
-    }
-
-    override fun setContentView(view: View, params: ViewGroup.LayoutParams?) {
-        super.setContentView(view, params)
-        fitSystemBars(view)
+    override fun onContentChanged() {
+        super.onContentChanged()
+        val content = findViewById<ViewGroup>(android.R.id.content)
+        fitSystemBars(content.getChildAt(0) ?: content)
     }
 
     private fun fitSystemBars(root: View) {
