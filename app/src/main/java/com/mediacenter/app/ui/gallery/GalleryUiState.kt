@@ -23,4 +23,8 @@ data class GalleryUiState(
     val navItems: List<NavDestination> = emptyList(),
     val selectedNavId: String = NavDestination.STORAGE_ID,
     val volumes: List<VolumeInfo> = emptyList(),
+    val searchQuery: String = "",
+    val showSearch: Boolean = false,
+    val searchHint: String = "",
+    val canCreate: Boolean = false,
 )

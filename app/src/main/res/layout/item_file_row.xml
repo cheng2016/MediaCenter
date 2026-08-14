@@ -7,7 +7,7 @@
     android:clickable="true"
     android:descendantFocusability="blocksDescendants"
     android:focusable="true"
-    android:focusableInTouchMode="true"
+    android:focusableInTouchMode="false"
     android:gravity="center_vertical"
     android:nextFocusLeft="@id/navList"
     android:minHeight="72dp"
@@ -52,6 +52,16 @@
             android:textSize="13sp"
             tools:text="2025/06/11 | 文本" />
     </LinearLayout>
+
+    <ImageView
+        android:id="@+id/favorite"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_marginEnd="8dp"
+        android:contentDescription="@string/cd_favorite"
+        android:src="@drawable/ic_favorite_small"
+        android:visibility="gone"
+        tools:visibility="visible" />
 
     <ImageView
         android:layout_width="18dp"

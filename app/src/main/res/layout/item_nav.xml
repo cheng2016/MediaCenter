@@ -8,7 +8,7 @@
     android:clickable="true"
     android:descendantFocusability="blocksDescendants"
     android:focusable="true"
-    android:focusableInTouchMode="true"
+    android:focusableInTouchMode="false"
     android:gravity="center_vertical"
     android:nextFocusRight="@id/contentList"
     android:orientation="horizontal"

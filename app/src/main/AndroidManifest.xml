@@ -4,8 +4,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
@@ -54,12 +57,33 @@
             android:theme="@style/Theme.MediaCenter.Viewer" />
 
         <activity
+            android:name=".ui.audio.AudioPlayerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.MediaCenter.Viewer" />
+
+        <activity
             android:name=".ui.web.WebViewerActivity"
             android:exported="false"
             android:theme="@style/Theme.MediaCenter.Viewer" />
 
         <activity
             android:name=".ui.text.TextViewerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MediaCenter.Viewer" />
+
+        <activity
+            android:name=".ui.pdf.PdfViewerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MediaCenter.Viewer" />
+
+        <activity
+            android:name=".ui.book.BookViewerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MediaCenter.Viewer" />
+
+        <activity
+            android:name=".ui.archive.ArchiveViewerActivity"
             android:exported="false"
             android:theme="@style/Theme.MediaCenter.Viewer" />
 

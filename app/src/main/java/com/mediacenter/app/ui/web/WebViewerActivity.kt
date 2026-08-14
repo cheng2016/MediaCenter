@@ -14,7 +14,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
-import androidx.appcompat.app.AppCompatActivity
+import com.mediacenter.app.ui.BaseActivity
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -27,7 +27,7 @@ import java.io.File
 import java.io.FileInputStream
 import kotlinx.coroutines.launch
 
-class WebViewerActivity : AppCompatActivity() {
+class WebViewerActivity : BaseActivity() {
 
     private val viewModel: WebViewerViewModel by viewModels()
     private lateinit var binding: ActivityWebViewerBinding

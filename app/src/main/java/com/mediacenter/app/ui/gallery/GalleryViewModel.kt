@@ -6,12 +6,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mediacenter.app.MediaCenterApp
 import com.mediacenter.app.R
+import com.mediacenter.app.data.CreateParent
 import com.mediacenter.app.data.MediaRepository
 import com.mediacenter.app.data.VolumeInfo
 import com.mediacenter.app.data.model.MediaFilter
 import com.mediacenter.app.data.model.MediaItem
 import com.mediacenter.app.data.model.MediaType
 import com.mediacenter.app.data.model.SortMode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -20,10 +22,13 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = (application as MediaCenterApp).repository
+    private val recentStore = (application as MediaCenterApp).recentStore
+    private val favoriteStore = (application as MediaCenterApp).favoriteStore
 
     private var library = MediaRepository.Library(emptyList(), emptyList())
     private val folderStack = ArrayList<MediaItem>()
@@ -31,12 +36,19 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private var selectedVolumeId: String? = null
     private var sortMode: SortMode = SortMode.DATE
     private var forceListMode: Boolean? = null
+    private var searchQuery: String = ""
 
     private val _uiState = MutableStateFlow(GalleryUiState(loading = true, title = "内部存储"))
     val uiState: StateFlow<GalleryUiState> = _uiState.asStateFlow()
 
     private val _usbAccessEvent = MutableSharedFlow<VolumeInfo>(extraBufferCapacity = 1)
     val usbAccessEvent: SharedFlow<VolumeInfo> = _usbAccessEvent.asSharedFlow()
+
+    private val _messageEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val messageEvent: SharedFlow<String> = _messageEvent.asSharedFlow()
+
+    private val _openCreatedEvent = MutableSharedFlow<MediaItem>(extraBufferCapacity = 1)
+    val openCreatedEvent: SharedFlow<MediaItem> = _openCreatedEvent.asSharedFlow()
 
     fun onPermissionNeeded() {
         _uiState.update { it.copy(permissionNeeded = true, loading = false) }
@@ -49,6 +61,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun onNavClick(item: NavDestination) {
         folderStack.clear()
+        searchQuery = ""
         if (item.volumeId != null) {
             selectedVolumeId = item.volumeId
             requestUsbAccessIfNeeded(item.volumeId)
@@ -115,8 +128,15 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         viewModelScope.launch {
+            _uiState.update { it.copy(loading = true) }
             folderStack.add(folder)
-            safChildren[folder.id] = repository.listFolderContents(folder)
+            searchQuery = ""
+            runCatching { repository.listFolderContents(folder) }
+                .onSuccess { safChildren[folder.id] = it }
+                .onFailure { error ->
+                    if (folderStack.isNotEmpty()) folderStack.removeAt(folderStack.lastIndex)
+                    _messageEvent.tryEmit(error.message ?: "无法打开文件夹")
+                }
             publish()
         }
     }
@@ -124,14 +144,135 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     fun closeFolder(): Boolean {
         if (folderStack.isEmpty()) return false
         folderStack.removeAt(folderStack.lastIndex)
+        searchQuery = ""
         publish()
         return true
     }
 
     fun openItem(item: MediaItem) {
         lastOpenedItemId = item.id
+        recentStore.add(item)
         if (item.type == MediaType.IMAGE) {
             repository.lastOpenedImages = visibleItems().filter { it.type == MediaType.IMAGE }
+        }
+        if (item.type == MediaType.AUDIO) {
+            val playlist = visibleItems().filter { it.type == MediaType.AUDIO && !it.isMissing }
+            repository.lastOpenedAudio = playlist.ifEmpty { listOf(item) }
+        }
+        if (_uiState.value.filter == MediaFilter.RECENT) {
+            publish()
+        }
+    }
+
+    fun dismissMissing(item: MediaItem) {
+        recentStore.remove(item)
+        favoriteStore.remove(item)
+        publish()
+    }
+
+    fun canModify(item: MediaItem): Boolean = repository.canModify(item)
+
+    fun deleteItem(item: MediaItem) {
+        viewModelScope.launch {
+            repository.deleteItem(item)
+                .onSuccess {
+                    recentStore.remove(item)
+                    favoriteStore.remove(item)
+                    reloadAfterCreate()
+                }
+                .onFailure { _messageEvent.tryEmit(it.message ?: "无法删除") }
+        }
+    }
+
+    fun renameItem(item: MediaItem, name: String) {
+        viewModelScope.launch {
+            repository.renameItem(item, name)
+                .onSuccess { reloadAfterCreate() }
+                .onFailure { _messageEvent.tryEmit(it.message ?: "无法重命名") }
+        }
+    }
+
+    fun loadMoveDestinations(exclude: MediaItem, onReady: (List<MediaItem>) -> Unit) {
+        val parent = writableParent() ?: run {
+            onReady(emptyList())
+            return
+        }
+        viewModelScope.launch {
+            val folders = repository.listChildFolders(parent).filter { dest ->
+                dest.id != exclude.id && dest.filePath != exclude.filePath
+            }
+            onReady(folders)
+        }
+    }
+
+    fun moveItem(item: MediaItem, destFolder: MediaItem) {
+        val dest = when {
+            repository.canWriteDirectory(destFolder.filePath) -> CreateParent.Path(destFolder.filePath!!)
+            destFolder.isSafFolder || destFolder.id.startsWith("saf-") -> CreateParent.Saf(destFolder.uri)
+            else -> {
+                _messageEvent.tryEmit("目标目录不可写")
+                return
+            }
+        }
+        viewModelScope.launch {
+            repository.moveItem(item, dest)
+                .onSuccess { reloadAfterCreate() }
+                .onFailure { _messageEvent.tryEmit(it.message ?: "无法移动") }
+        }
+    }
+
+    fun createFolder(name: String) {
+        val parent = writableParent() ?: return
+        viewModelScope.launch {
+            repository.createFolder(parent, name)
+                .onSuccess { reloadAfterCreate() }
+                .onFailure { _messageEvent.tryEmit(it.message ?: "无法创建文件夹") }
+        }
+    }
+
+    fun createTextFile(name: String) {
+        val parent = writableParent() ?: return
+        val trimmed = name.trim()
+        val base = if (trimmed.endsWith(".txt", ignoreCase = true)) {
+            trimmed.dropLast(4)
+        } else {
+            trimmed.substringBeforeLast('.', trimmed)
+        }.ifBlank { "未命名" }
+        viewModelScope.launch {
+            repository.createTextFile(parent, "$base.txt", "txt", "")
+                .onSuccess { item ->
+                    reloadAfterCreate()
+                    _openCreatedEvent.tryEmit(item)
+                }
+                .onFailure { _messageEvent.tryEmit(it.message ?: "无法创建文件") }
+        }
+    }
+
+    private suspend fun reloadAfterCreate() {
+        if (folderStack.isNotEmpty()) {
+            val folder = folderStack.last()
+            safChildren[folder.id] = repository.listFolderContents(folder)
+            publish()
+        } else {
+            runCatching { repository.loadLibrary() }
+                .onSuccess { loaded ->
+                    library = loaded
+                    publish()
+                }
+        }
+    }
+
+    fun toggleFavorite(item: MediaItem): Boolean {
+        val added = favoriteStore.toggle(item)
+        publish()
+        return added
+    }
+
+    fun setSearchQuery(query: String) {
+        if (searchQuery == query) return
+        searchQuery = query
+        if (_uiState.value.filter == MediaFilter.SEARCH || folderStack.isNotEmpty()) {
+            publish()
         }
     }
 
@@ -163,37 +304,84 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     private fun publish(filter: MediaFilter = _uiState.value.filter) {
         val folder = folderStack.lastOrNull()
-        val items = sortItems(visibleItems(filter, folder))
+        val rawItems = sortItems(visibleItems(filter, folder))
         val showingFolders = filter == MediaFilter.ALL && folder == null
         val autoList = showingFolders || folder != null ||
-            filter == MediaFilter.WEB || filter == MediaFilter.TEXT
+            filter == MediaFilter.WEB || filter == MediaFilter.TEXT || filter == MediaFilter.BOOK ||
+            filter == MediaFilter.MUSIC || filter == MediaFilter.ARCHIVE || filter == MediaFilter.APK ||
+            filter == MediaFilter.RECENT || filter == MediaFilter.FAVORITE || filter == MediaFilter.SEARCH
         val volume = selectedVolumeId?.let { id -> library.volumes.firstOrNull { it.id == id } }
-        val usbNeedsAccess = volume != null &&
-            folder == null &&
-            items.isEmpty() &&
-            !volume.hasAccess &&
-            repository.volumeTreeUri(volume.id) == null
-        _uiState.update {
-            it.copy(
-                items = items,
-                filter = filter,
-                currentFolder = folder,
-                title = folder?.name ?: defaultTitle(filter, volume),
-                subtitle = subtitle(filter, folder, items),
-                showingFolders = showingFolders,
-                listMode = forceListMode ?: autoList,
-                sortMode = sortMode,
-                canGoBack = folder != null,
-                loading = false,
-                error = null,
-                permissionNeeded = false,
-                usbNeedsAccess = usbNeedsAccess,
-                selectedVolumeId = selectedVolumeId,
-                navItems = buildNavItems(),
-                selectedNavId = selectedNavId(filter),
-                volumes = library.volumes,
-            )
+        viewModelScope.launch {
+            val items = withContext(Dispatchers.IO) {
+                rawItems.map { item ->
+                    val missing = (filter == MediaFilter.RECENT || filter == MediaFilter.FAVORITE) &&
+                        !repository.exists(item)
+                    item.copy(
+                        isFavorite = item.type != MediaType.FOLDER && favoriteStore.contains(item),
+                        isMissing = missing,
+                    )
+                }
+            }
+            val usbNeedsAccess = volume != null &&
+                folder == null &&
+                items.isEmpty() &&
+                !volume.hasAccess &&
+                repository.volumeTreeUri(volume.id) == null
+            _uiState.update {
+                it.copy(
+                    items = items,
+                    filter = filter,
+                    currentFolder = folder,
+                    title = folder?.name ?: defaultTitle(filter, volume),
+                    subtitle = subtitle(filter, folder, items),
+                    showingFolders = showingFolders,
+                    listMode = forceListMode ?: autoList,
+                    sortMode = sortMode,
+                    canGoBack = folder != null,
+                    loading = false,
+                    error = null,
+                    permissionNeeded = false,
+                    usbNeedsAccess = usbNeedsAccess,
+                    selectedVolumeId = selectedVolumeId,
+                    navItems = buildNavItems(),
+                    selectedNavId = selectedNavId(filter),
+                    volumes = library.volumes,
+                    searchQuery = searchQuery,
+                    showSearch = (filter == MediaFilter.SEARCH && folder == null) || folder != null,
+                    searchHint = if (folder != null) {
+                        getApplication<Application>().getString(R.string.search_hint_folder)
+                    } else {
+                        getApplication<Application>().getString(R.string.search_hint_indexed)
+                    },
+                    canCreate = writableParent(filter, folder) != null,
+                )
+            }
         }
+    }
+
+    private fun writableParent(
+        filter: MediaFilter = _uiState.value.filter,
+        folder: MediaItem? = folderStack.lastOrNull(),
+    ): CreateParent? {
+        if (filter != MediaFilter.ALL) return null
+        if (folder != null) {
+            if (repository.canWriteDirectory(folder.filePath)) {
+                return CreateParent.Path(folder.filePath!!)
+            }
+            if (folder.isSafFolder || folder.id.startsWith("saf-")) {
+                return CreateParent.Saf(folder.uri)
+            }
+            return null
+        }
+        val volume = selectedVolumeId?.let { id -> library.volumes.firstOrNull { it.id == id } }
+            ?: library.volumes.firstOrNull { it.isPrimary }
+        if (repository.canWriteDirectory(volume?.directoryPath)) {
+            return CreateParent.Path(volume!!.directoryPath!!)
+        }
+        selectedVolumeId?.let { id ->
+            repository.volumeTreeUri(id)?.let { return CreateParent.Saf(it) }
+        }
+        return null
     }
 
     private fun visibleItems(
@@ -205,11 +393,29 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             filter == MediaFilter.ALL && folder == null && volumeId != null ->
                 library.volumeRoots[volumeId].orEmpty()
             filter == MediaFilter.ALL && folder == null -> library.folders
-            filter == MediaFilter.ALL && folder != null -> folderContents(folder)
+            filter == MediaFilter.ALL && folder != null -> {
+                val children = folderContents(folder)
+                val query = searchQuery.trim()
+                if (query.isEmpty()) children
+                else children.filter { it.name.contains(query, ignoreCase = true) }
+            }
             filter == MediaFilter.IMAGE -> library.files.filter { it.type == MediaType.IMAGE }
             filter == MediaFilter.VIDEO -> library.files.filter { it.type == MediaType.VIDEO }
             filter == MediaFilter.WEB -> library.files.filter { it.type == MediaType.WEB }
             filter == MediaFilter.TEXT -> library.files.filter { it.type == MediaType.TEXT }
+            filter == MediaFilter.BOOK -> library.files.filter {
+                it.type == MediaType.PDF || it.type == MediaType.BOOK
+            }
+            filter == MediaFilter.MUSIC -> library.files.filter { it.type == MediaType.AUDIO }
+            filter == MediaFilter.ARCHIVE -> library.files.filter { it.type == MediaType.ARCHIVE }
+            filter == MediaFilter.APK -> library.files.filter { it.type == MediaType.APK }
+            filter == MediaFilter.RECENT -> recentStore.list()
+            filter == MediaFilter.FAVORITE -> favoriteStore.list()
+            filter == MediaFilter.SEARCH -> {
+                val query = searchQuery.trim()
+                if (query.isEmpty()) emptyList()
+                else library.files.filter { it.name.contains(query, ignoreCase = true) }
+            }
             else -> emptyList()
         }
     }
@@ -244,10 +450,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         if (volume != null && filter == MediaFilter.ALL) return volume.name
         return when (filter) {
             MediaFilter.ALL -> "内部存储"
+            MediaFilter.RECENT -> "最近"
+            MediaFilter.FAVORITE -> "收藏"
+            MediaFilter.SEARCH -> "搜索"
             MediaFilter.IMAGE -> "图片"
             MediaFilter.VIDEO -> "视频"
+            MediaFilter.MUSIC -> "音乐"
             MediaFilter.WEB -> "网页"
             MediaFilter.TEXT -> "文本"
+            MediaFilter.BOOK -> "电子书"
+            MediaFilter.ARCHIVE -> "压缩包"
+            MediaFilter.APK -> "安装包"
         }
     }
 
@@ -255,10 +468,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         selectedVolumeId?.let { return "volume-$it" }
         return when (filter) {
             MediaFilter.ALL -> NavDestination.STORAGE_ID
+            MediaFilter.RECENT -> NavDestination.RECENT_ID
+            MediaFilter.FAVORITE -> NavDestination.FAVORITE_ID
+            MediaFilter.SEARCH -> NavDestination.SEARCH_ID
             MediaFilter.IMAGE -> NavDestination.IMAGE_ID
             MediaFilter.VIDEO -> NavDestination.VIDEO_ID
+            MediaFilter.MUSIC -> NavDestination.MUSIC_ID
             MediaFilter.WEB -> NavDestination.WEB_ID
             MediaFilter.TEXT -> NavDestination.TEXT_ID
+            MediaFilter.BOOK -> NavDestination.BOOK_ID
+            MediaFilter.ARCHIVE -> NavDestination.ARCHIVE_ID
+            MediaFilter.APK -> NavDestination.APK_ID
         }
     }
 
@@ -280,6 +500,24 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             )
         }
         items += NavDestination(
+            id = NavDestination.RECENT_ID,
+            title = app.getString(R.string.filter_recent),
+            iconRes = R.drawable.ic_nav_recent,
+            filter = MediaFilter.RECENT,
+        )
+        items += NavDestination(
+            id = NavDestination.FAVORITE_ID,
+            title = app.getString(R.string.filter_favorite),
+            iconRes = R.drawable.ic_nav_favorite,
+            filter = MediaFilter.FAVORITE,
+        )
+        items += NavDestination(
+            id = NavDestination.SEARCH_ID,
+            title = app.getString(R.string.filter_search),
+            iconRes = R.drawable.ic_nav_search,
+            filter = MediaFilter.SEARCH,
+        )
+        items += NavDestination(
             id = NavDestination.IMAGE_ID,
             title = app.getString(R.string.filter_image),
             iconRes = R.drawable.ic_nav_image,
@@ -290,6 +528,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             title = app.getString(R.string.filter_video),
             iconRes = R.drawable.ic_nav_video,
             filter = MediaFilter.VIDEO,
+        )
+        items += NavDestination(
+            id = NavDestination.MUSIC_ID,
+            title = app.getString(R.string.filter_music),
+            iconRes = R.drawable.ic_nav_music,
+            filter = MediaFilter.MUSIC,
         )
         items += NavDestination(
             id = NavDestination.WEB_ID,
@@ -303,6 +547,24 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             iconRes = R.drawable.ic_nav_text,
             filter = MediaFilter.TEXT,
         )
+        items += NavDestination(
+            id = NavDestination.BOOK_ID,
+            title = app.getString(R.string.filter_book),
+            iconRes = R.drawable.ic_nav_book,
+            filter = MediaFilter.BOOK,
+        )
+        items += NavDestination(
+            id = NavDestination.ARCHIVE_ID,
+            title = app.getString(R.string.filter_archive),
+            iconRes = R.drawable.ic_nav_archive,
+            filter = MediaFilter.ARCHIVE,
+        )
+        items += NavDestination(
+            id = NavDestination.APK_ID,
+            title = app.getString(R.string.filter_apk),
+            iconRes = R.drawable.ic_nav_apk,
+            filter = MediaFilter.APK,
+        )
         return items
     }
 
@@ -314,6 +576,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             filter == MediaFilter.VIDEO -> "${items.size} 个视频"
             filter == MediaFilter.WEB -> "${items.size} 个网页"
             filter == MediaFilter.TEXT -> "${items.size} 个文本"
+            filter == MediaFilter.BOOK -> "${items.size} 本电子书"
+            filter == MediaFilter.MUSIC -> "${items.size} 首音乐"
+            filter == MediaFilter.ARCHIVE -> "${items.size} 个压缩包"
+            filter == MediaFilter.APK -> "${items.size} 个安装包"
+            filter == MediaFilter.RECENT -> "${items.size} 个最近打开"
+            filter == MediaFilter.FAVORITE -> "${items.size} 个收藏"
+            filter == MediaFilter.SEARCH -> if (searchQuery.isBlank()) {
+                "只搜已索引的文件"
+            } else {
+                "${items.size} 个结果 · 只搜已索引的文件"
+            }
             else -> ""
         }
     }

@@ -6,7 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.webkit.MimeTypeMap
+import android.widget.EditText
 import android.widget.Toast
 import android.hardware.usb.UsbManager
 import android.net.Uri
@@ -21,25 +21,22 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
+import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.appcompat.widget.PopupMenu
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.mediacenter.app.R
-import com.mediacenter.app.data.MediaRepository
 import com.mediacenter.app.data.model.SortMode
 import com.mediacenter.app.data.model.MediaFilter
 import com.mediacenter.app.data.model.MediaItem
 import com.mediacenter.app.data.model.MediaType
 import com.mediacenter.app.databinding.FragmentGalleryBinding
-import com.mediacenter.app.ui.image.ImageViewerActivity
-import com.mediacenter.app.ui.text.TextViewerActivity
-import com.mediacenter.app.ui.video.VideoPlayerActivity
-import com.mediacenter.app.ui.web.WebViewerActivity
 import kotlinx.coroutines.launch
 
 class GalleryFragment : Fragment() {
@@ -48,7 +45,7 @@ class GalleryFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val viewModel: GalleryViewModel by viewModels()
-    private val adapter = MediaAdapter(::onItemClick, ::focusSidebar)
+    private val adapter = MediaAdapter(::onItemClick, ::focusSidebar, ::showFileMenu)
     private val navAdapter = NavAdapter(::onNavSelected, ::focusContent)
     private var requestedInitialFocus = false
     private val listLayout by lazy { LinearLayoutManager(requireContext()) }
@@ -122,18 +119,24 @@ class GalleryFragment : Fragment() {
         binding.contentList.adapter = adapter
         binding.contentList.itemAnimator = null
         binding.navList.setOnFocusChangeListener { _, hasFocus ->
-            if (hasFocus && binding.navList.focusedChild == null) focusSidebar()
+            if (hasFocus && !binding.navList.isInTouchMode && binding.navList.focusedChild == null) {
+                focusSidebar()
+            }
         }
         binding.contentList.setOnFocusChangeListener { _, hasFocus ->
-            if (hasFocus && binding.contentList.focusedChild == null) focusContent()
+            if (hasFocus && !binding.contentList.isInTouchMode && binding.contentList.focusedChild == null) {
+                focusContent()
+            }
         }
 
         binding.buttonToggleSidebar.setOnClickListener { toggleSidebar() }
         binding.buttonBack.setOnClickListener { viewModel.closeFolder() }
+        binding.buttonCreate.setOnClickListener { showCreateMenu() }
         binding.buttonAddFolder.setOnClickListener { folderLauncher.launch(null) }
         binding.buttonSort.setOnClickListener { showSortMenu() }
         binding.buttonEmptyAddFolder.setOnClickListener { viewModel.requestUsbAccess() }
         binding.buttonPermission.setOnClickListener { requestStorageAccess() }
+        binding.searchInput.doAfterTextChanged { viewModel.setSearchQuery(it?.toString().orEmpty()) }
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -143,6 +146,18 @@ class GalleryFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.usbAccessEvent.collect(::openVolumeAccess)
+            }
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.messageEvent.collect { message ->
+                    Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.openCreatedEvent.collect(::onItemClick)
             }
         }
 
@@ -209,8 +224,17 @@ class GalleryFragment : Fragment() {
         binding.emptyGroup.isVisible = !state.loading && !state.permissionNeeded && state.items.isEmpty()
         binding.permissionGroup.isVisible = state.permissionNeeded
         binding.contentTitle.text = state.title.ifEmpty { getString(R.string.nav_storage) }
+        binding.buttonCreate.isVisible = state.canCreate
         binding.buttonBack.isVisible = state.canGoBack
         backCallback.isEnabled = state.canGoBack
+        binding.searchInput.isVisible = state.showSearch
+        if (state.showSearch) {
+            binding.searchInput.hint = state.searchHint.ifBlank { getString(R.string.search_hint) }
+        }
+        if (state.showSearch && binding.searchInput.text.toString() != state.searchQuery) {
+            binding.searchInput.setText(state.searchQuery)
+            binding.searchInput.setSelection(state.searchQuery.length)
+        }
         binding.buttonEmptyAddFolder.isVisible = state.usbNeedsAccess
         binding.buttonEmptyAddFolder.setText(R.string.action_open_usb)
         binding.buttonPermission.setText(R.string.permission_all_files)
@@ -219,6 +243,13 @@ class GalleryFragment : Fragment() {
                 state.usbNeedsAccess -> R.drawable.ic_usb
                 state.showingFolders -> R.drawable.ic_folder_yellow
                 state.filter == MediaFilter.WEB -> R.drawable.ic_nav_web
+                state.filter == MediaFilter.BOOK -> R.drawable.ic_nav_book
+                state.filter == MediaFilter.MUSIC -> R.drawable.ic_nav_music
+                state.filter == MediaFilter.ARCHIVE -> R.drawable.ic_nav_archive
+                state.filter == MediaFilter.APK -> R.drawable.ic_nav_apk
+                state.filter == MediaFilter.RECENT -> R.drawable.ic_nav_recent
+                state.filter == MediaFilter.FAVORITE -> R.drawable.ic_nav_favorite
+                state.filter == MediaFilter.SEARCH -> R.drawable.ic_nav_search
                 else -> R.drawable.ic_nav_text
             },
         )
@@ -227,6 +258,17 @@ class GalleryFragment : Fragment() {
             state.usbNeedsAccess -> getString(R.string.empty_usb)
             state.filter == MediaFilter.WEB -> getString(R.string.empty_web)
             state.filter == MediaFilter.TEXT -> getString(R.string.empty_text)
+            state.filter == MediaFilter.BOOK -> getString(R.string.empty_book)
+            state.filter == MediaFilter.MUSIC -> getString(R.string.empty_music)
+            state.filter == MediaFilter.ARCHIVE -> getString(R.string.empty_archive)
+            state.filter == MediaFilter.APK -> getString(R.string.empty_apk)
+            state.filter == MediaFilter.RECENT -> getString(R.string.empty_recent)
+            state.filter == MediaFilter.FAVORITE -> getString(R.string.empty_favorite)
+            state.filter == MediaFilter.SEARCH && state.searchQuery.isBlank() ->
+                getString(R.string.empty_search)
+            state.filter == MediaFilter.SEARCH -> getString(R.string.empty_search_none)
+            state.currentFolder != null && state.searchQuery.isNotBlank() ->
+                getString(R.string.empty_search_none)
             state.showingFolders -> getString(R.string.empty_folders)
             else -> getString(R.string.empty_gallery)
         }
@@ -265,6 +307,52 @@ class GalleryFragment : Fragment() {
         binding.sidebarDivider.isVisible = show
     }
 
+    private fun showCreateMenu() {
+        val popup = PopupMenu(requireContext(), binding.buttonCreate)
+        popup.menuInflater.inflate(R.menu.menu_create, popup.menu)
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.create_folder -> {
+                    askName(getString(R.string.create_folder), getString(R.string.create_folder_default)) { name ->
+                        viewModel.createFolder(name)
+                    }
+                    true
+                }
+                R.id.create_text -> {
+                    askName(getString(R.string.create_text), getString(R.string.create_text_default)) { name ->
+                        viewModel.createTextFile(name)
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
+    }
+
+    private fun askName(title: String, defaultName: String, onConfirm: (String) -> Unit) {
+        val input = EditText(requireContext()).apply {
+            setText(defaultName)
+            setSelection(0, defaultName.substringBeforeLast('.', defaultName).length)
+            setTextColor(ContextCompat.getColor(requireContext(), R.color.md_on_surface))
+            setHintTextColor(ContextCompat.getColor(requireContext(), R.color.md_on_surface_variant))
+            hint = getString(R.string.create_name_hint)
+            isFocusable = true
+            isFocusableInTouchMode = true
+            setPadding(48, 32, 48, 16)
+        }
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(title)
+            .setView(input)
+            .setPositiveButton(R.string.action_ok) { _, _ ->
+                val name = input.text?.toString().orEmpty()
+                if (name.isNotBlank()) onConfirm(name)
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+        input.requestFocus()
+    }
+
     private fun showSortMenu() {
         val state = viewModel.uiState.value
         val popup = PopupMenu(requireContext(), binding.buttonSort)
@@ -290,7 +378,9 @@ class GalleryFragment : Fragment() {
 
     private fun onNavSelected(item: NavDestination) {
         viewModel.onNavClick(item)
-        binding.navList.post { focusSidebar() }
+        if (!binding.navList.isInTouchMode) {
+            binding.navList.post { focusSidebar() }
+        }
     }
 
     private fun focusSidebar() {
@@ -308,6 +398,7 @@ class GalleryFragment : Fragment() {
             binding.contentList.isVisible && adapter.itemCount > 0 -> {
                 Dpad.focusPosition(binding.contentList, 0)
             }
+            binding.searchInput.isVisible -> binding.searchInput.requestFocus()
             binding.buttonEmptyAddFolder.isVisible -> binding.buttonEmptyAddFolder.requestFocus()
             binding.buttonPermission.isVisible -> binding.buttonPermission.requestFocus()
             binding.buttonSort.isVisible -> binding.buttonSort.requestFocus()
@@ -326,46 +417,119 @@ class GalleryFragment : Fragment() {
         }
     }
 
+    private fun showFileMenu(anchor: android.view.View, item: MediaItem) {
+        val popup = PopupMenu(requireContext(), anchor)
+        popup.menuInflater.inflate(R.menu.menu_file, popup.menu)
+        val canModify = viewModel.canModify(item)
+        popup.menu.findItem(R.id.file_favorite).isVisible = item.type != MediaType.FOLDER && !item.isMissing
+        popup.menu.findItem(R.id.file_favorite).title =
+            if (item.isFavorite) getString(R.string.action_unfavorite) else getString(R.string.action_favorite)
+        popup.menu.findItem(R.id.file_rename).isVisible = canModify
+        popup.menu.findItem(R.id.file_move).isVisible = canModify && item.type != MediaType.FOLDER
+        popup.menu.findItem(R.id.file_delete).isVisible = canModify
+        popup.menu.findItem(R.id.file_remove_record).isVisible = item.isMissing
+        popup.setOnMenuItemClickListener { menuItem ->
+            when (menuItem.itemId) {
+                R.id.file_favorite -> {
+                    val added = viewModel.toggleFavorite(item)
+                    Toast.makeText(
+                        requireContext(),
+                        if (added) R.string.favorite_added else R.string.favorite_removed,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    true
+                }
+                R.id.file_rename -> {
+                    askName(getString(R.string.action_rename), item.name) { name ->
+                        viewModel.renameItem(item, name)
+                    }
+                    true
+                }
+                R.id.file_move -> {
+                    pickMoveDestination(item)
+                    true
+                }
+                R.id.file_delete -> {
+                    confirmDelete(item)
+                    true
+                }
+                R.id.file_remove_record -> {
+                    viewModel.dismissMissing(item)
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
+    }
+
+    private fun confirmDelete(item: MediaItem) {
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.action_delete)
+            .setMessage(getString(R.string.confirm_delete, item.name))
+            .setPositiveButton(R.string.action_delete) { _, _ -> viewModel.deleteItem(item) }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
+    }
+
+    private fun pickMoveDestination(item: MediaItem) {
+        viewModel.loadMoveDestinations(item) { folders ->
+            if (!isAdded) return@loadMoveDestinations
+            if (folders.isEmpty()) {
+                Toast.makeText(requireContext(), R.string.move_no_target, Toast.LENGTH_SHORT).show()
+                return@loadMoveDestinations
+            }
+            val names = folders.map { it.name }.toTypedArray()
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.action_move)
+                .setItems(names) { _, which ->
+                    viewModel.moveItem(item, folders[which])
+                }
+                .setNegativeButton(R.string.action_cancel, null)
+                .show()
+        }
+    }
+
     private fun onItemClick(item: MediaItem) {
+        if (item.isMissing) {
+            Toast.makeText(requireContext(), R.string.file_missing, Toast.LENGTH_SHORT).show()
+            viewModel.dismissMissing(item)
+            return
+        }
         if (item.type == MediaType.FOLDER) {
             viewModel.openFolder(item)
             return
         }
         viewModel.openItem(item)
-        val openType = if (MediaRepository.isWebPage(item.name, item.mimeType)) {
-            MediaType.WEB
-        } else {
-            item.type
+        val openType = MediaIntents.resolveType(item)
+        if (openType == MediaType.APK) {
+            val (intent, message) = MediaIntents.apkIntent(requireContext(), item)
+            if (message != null) {
+                Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
+            }
+            try {
+                startActivity(intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            } catch (_: Exception) {
+                Toast.makeText(requireContext(), R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
+            }
+            return
         }
-        val intent = when (openType) {
-            MediaType.IMAGE -> ImageViewerActivity.intent(requireContext(), item)
-            MediaType.VIDEO -> VideoPlayerActivity.intent(requireContext(), item)
-            MediaType.WEB -> WebViewerActivity.intent(requireContext(), item)
-            MediaType.TEXT -> TextViewerActivity.intent(requireContext(), item)
-            MediaType.FILE -> openGenericFile(item) ?: return
-            MediaType.FOLDER -> return
+        if (openType == MediaType.ARCHIVE &&
+            !com.mediacenter.app.data.MediaRepository.isZipArchive(item.name)
+        ) {
+            Toast.makeText(requireContext(), R.string.archive_unsupported, Toast.LENGTH_SHORT).show()
+            return
         }
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val intent = MediaIntents.viewerIntent(requireContext(), item)
+        if (intent == null) {
+            Toast.makeText(requireContext(), R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
+            return
+        }
         try {
-            startActivity(intent)
+            startActivity(intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
         } catch (_: Exception) {
             Toast.makeText(requireContext(), R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private fun openGenericFile(item: MediaItem): Intent? {
-        val ext = item.name.substringAfterLast('.', "")
-        val mime = item.mimeType
-            ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
-            ?: "*/*"
-        val intent = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(item.uri, mime)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        if (intent.resolveActivity(requireContext().packageManager) == null) {
-            Toast.makeText(requireContext(), R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
-            return null
-        }
-        return intent
     }
 
     private fun ensurePermissionThen(onGranted: () -> Unit) {
@@ -415,9 +579,13 @@ class GalleryFragment : Fragment() {
             arrayOf(
                 Manifest.permission.READ_MEDIA_IMAGES,
                 Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO,
             )
         } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            arrayOf(
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            )
         }
     }
 

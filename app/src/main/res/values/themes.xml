@@ -6,6 +6,7 @@
         <item name="android:statusBarColor">@color/md_black</item>
         <item name="android:navigationBarColor">@color/md_black</item>
         <item name="android:windowBackground">@color/md_black</item>
+        <item name="android:windowLightStatusBar">false</item>
         <item name="android:textColorPrimary">@color/md_on_surface</item>
     </style>
 

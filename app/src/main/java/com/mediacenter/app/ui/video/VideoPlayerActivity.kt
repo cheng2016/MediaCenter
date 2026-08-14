@@ -4,13 +4,13 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.viewModels
-import androidx.appcompat.app.AppCompatActivity
+import com.mediacenter.app.ui.BaseActivity
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import com.mediacenter.app.data.model.MediaItem as AppMediaItem
 import com.mediacenter.app.databinding.ActivityVideoPlayerBinding
 
-class VideoPlayerActivity : AppCompatActivity() {
+class VideoPlayerActivity : BaseActivity() {
 
     private val viewModel: VideoPlayerViewModel by viewModels()
     private var player: ExoPlayer? = null
@@ -34,12 +34,16 @@ class VideoPlayerActivity : AppCompatActivity() {
         binding.playerView.player = exo
         exo.setMediaItem(MediaItem.fromUri(uri))
         exo.prepare()
-        exo.seekTo(viewModel.position.value)
+        val resumeAt = viewModel.position.value
+        if (resumeAt > 0L) {
+            exo.seekTo(resumeAt)
+        }
         exo.playWhenReady = true
     }
 
     override fun onStop() {
-        viewModel.savePosition(player?.currentPosition ?: 0L)
+        val exo = player
+        viewModel.savePosition(exo?.currentPosition ?: 0L, exo?.duration ?: 0L)
         binding.playerView.player = null
         player?.release()
         player = null
@@ -58,6 +62,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             return Intent(context, VideoPlayerActivity::class.java)
                 .putExtra(VideoPlayerViewModel.EXTRA_URI, item.uri.toString())
                 .putExtra(VideoPlayerViewModel.EXTRA_TITLE, item.name)
+                .putExtra(VideoPlayerViewModel.EXTRA_FILE_PATH, item.filePath)
         }
     }
 }

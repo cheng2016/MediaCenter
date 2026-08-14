@@ -16,10 +16,17 @@ data class NavDestination(
 ) {
     companion object {
         const val STORAGE_ID = "storage"
+        const val RECENT_ID = "recent"
+        const val FAVORITE_ID = "favorite"
+        const val SEARCH_ID = "search"
         const val IMAGE_ID = "image"
         const val VIDEO_ID = "video"
+        const val MUSIC_ID = "music"
         const val WEB_ID = "web"
         const val TEXT_ID = "text"
+        const val BOOK_ID = "book"
+        const val ARCHIVE_ID = "archive"
+        const val APK_ID = "apk"
     }
 }
 

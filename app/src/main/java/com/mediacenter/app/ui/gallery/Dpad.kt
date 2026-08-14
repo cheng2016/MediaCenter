@@ -7,6 +7,13 @@ import androidx.recyclerview.widget.RecyclerView
 
 object Dpad {
 
+    fun isFavoriteAction(keyCode: Int): Boolean {
+        return keyCode == KeyEvent.KEYCODE_MENU ||
+            keyCode == KeyEvent.KEYCODE_INFO ||
+            keyCode == KeyEvent.KEYCODE_BOOKMARK ||
+            keyCode == KeyEvent.KEYCODE_BUTTON_Y
+    }
+
     fun isActivate(keyCode: Int): Boolean {
         return keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
             keyCode == KeyEvent.KEYCODE_ENTER ||
@@ -74,7 +81,8 @@ object Dpad {
 
     fun bindItem(view: View) {
         view.isFocusable = true
-        view.isFocusableInTouchMode = true
+        // Touch must click immediately. In-touch-mode focus swallows the first tap.
+        view.isFocusableInTouchMode = false
         view.isClickable = true
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             view.defaultFocusHighlightEnabled = false

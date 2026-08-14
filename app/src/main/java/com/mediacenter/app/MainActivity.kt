@@ -1,12 +1,12 @@
 package com.mediacenter.app
 
 import android.os.Bundle
-import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.commit
 import com.mediacenter.app.databinding.ActivityMainBinding
+import com.mediacenter.app.ui.BaseActivity
 import com.mediacenter.app.ui.gallery.GalleryFragment
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

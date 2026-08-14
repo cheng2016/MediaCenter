@@ -6,7 +6,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.activity.viewModels
-import androidx.appcompat.app.AppCompatActivity
+import com.mediacenter.app.ui.BaseActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -18,7 +18,7 @@ import com.mediacenter.app.databinding.ActivityImageViewerBinding
 import com.mediacenter.app.databinding.ItemImagePageBinding
 import kotlinx.coroutines.launch
 
-class ImageViewerActivity : AppCompatActivity() {
+class ImageViewerActivity : BaseActivity() {
 
     private val viewModel: ImageViewerViewModel by viewModels()
 

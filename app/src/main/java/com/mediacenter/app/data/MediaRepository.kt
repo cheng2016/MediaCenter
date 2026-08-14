@@ -24,6 +24,9 @@ class MediaRepository(private val context: Context) {
     @Volatile
     var lastOpenedImages: List<MediaItem> = emptyList()
 
+    @Volatile
+    var lastOpenedAudio: List<MediaItem> = emptyList()
+
     fun getSavedFolderUri(): Uri? = getSavedFolderUris().firstOrNull()
 
     fun getSavedFolderUris(): List<Uri> {
@@ -65,6 +68,7 @@ class MediaRepository(private val context: Context) {
         for (volume in volumes) {
             mediaStoreFiles += queryImages(volume.mediaStoreName, volume.id, volume.directoryPath)
             mediaStoreFiles += queryVideos(volume.mediaStoreName, volume.id, volume.directoryPath)
+            mediaStoreFiles += queryAudio(volume.mediaStoreName, volume.id, volume.directoryPath)
             mediaStoreFiles += queryDocuments(volume.mediaStoreName, volume.id)
         }
         val primaryFiles = mediaStoreFiles.filter { it.volumeId == StorageVolumes.PRIMARY_ID || it.volumeId == null }
@@ -129,15 +133,23 @@ class MediaRepository(private val context: Context) {
     }
 
     suspend fun listFolderContents(folder: MediaItem): List<MediaItem> = withContext(Dispatchers.IO) {
-        folder.filePath?.let { path ->
-            val dir = File(path)
-            if (canList(dir)) return@withContext listDirectory(dir)
+        if (folder.id.startsWith("album-") && folder.bucketId != null) {
+            val bucket = listBucketFiles(folder.bucketId, folder.volumeId)
+            if (bucket.isNotEmpty()) return@withContext bucket
         }
-        if (folder.isSafFolder || folder.uri.scheme == "content") {
-            val saf = listSafChildren(folder.uri)
-            if (saf.isNotEmpty()) return@withContext saf
+        folder.filePath?.let { path ->
+            val dir = File(path).let { file -> if (file.isDirectory) file else file.parentFile }
+            if (dir != null && dir.isDirectory && canList(dir)) {
+                return@withContext listDirectory(dir)
+            }
+        }
+        if (folder.isSafFolder) {
+            return@withContext listSafChildren(folder.uri)
         }
         folder.bucketId?.let { return@withContext listBucketFiles(it, folder.volumeId) }
+        if (folder.uri.scheme == "content") {
+            return@withContext listSafChildren(folder.uri)
+        }
         emptyList()
     }
 
@@ -392,10 +404,13 @@ class MediaRepository(private val context: Context) {
     }
 
     private fun listBucketFiles(bucketId: String, volumeId: String?): List<MediaItem> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
-        val volumeName = listVolumes().firstOrNull { it.id == volumeId }?.mediaStoreName
-            ?: MediaStore.VOLUME_EXTERNAL
-        val collection = MediaStore.Files.getContentUri(volumeName)
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val volumeName = listVolumes().firstOrNull { it.id == volumeId }?.mediaStoreName
+                ?: MediaStore.VOLUME_EXTERNAL
+            MediaStore.Files.getContentUri(volumeName)
+        } else {
+            MediaStore.Files.getContentUri("external")
+        }
         val items = ArrayList<MediaItem>()
         try {
             @Suppress("DEPRECATION")
@@ -454,8 +469,15 @@ class MediaRepository(private val context: Context) {
         return files.filter { it.bucketId == bucketId }
     }
 
-    suspend fun readText(uri: Uri, maxBytes: Int = TEXT_MAX_BYTES): TextLoadResult =
+    suspend fun readText(uri: Uri, filePath: String? = null, maxBytes: Int = TEXT_MAX_BYTES): TextLoadResult =
         withContext(Dispatchers.IO) {
+            resolveLocalPath(uri, filePath)?.let { path ->
+                val file = File(path)
+                val bytes = file.readBytes()
+                val truncated = bytes.size > maxBytes
+                val size = minOf(bytes.size, maxBytes)
+                return@withContext TextLoadResult(String(bytes, 0, size, Charsets.UTF_8), truncated)
+            }
             val resolver = context.contentResolver
             resolver.openInputStream(uri)?.use { input ->
                 val buffer = ByteArray(maxBytes + 1)
@@ -471,13 +493,351 @@ class MediaRepository(private val context: Context) {
             } ?: TextLoadResult("", truncated = false, error = "无法打开文件")
         }
 
+    suspend fun writeText(uri: Uri, filePath: String?, content: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                resolveLocalPath(uri, filePath)?.let { path ->
+                    File(path).writeText(content, Charsets.UTF_8)
+                    return@runCatching
+                }
+                context.contentResolver.openOutputStream(uri, "wt")?.use { output ->
+                    output.write(content.toByteArray(Charsets.UTF_8))
+                } ?: error("无法写入文件")
+            }
+        }
+
+    fun exists(item: MediaItem): Boolean {
+        val path = item.filePath
+        if (!path.isNullOrBlank()) {
+            return File(path).exists()
+        }
+        return runCatching {
+            context.contentResolver.openAssetFileDescriptor(item.uri, "r")?.use { true } ?: false
+        }.getOrDefault(false)
+    }
+
+    fun canModify(item: MediaItem): Boolean {
+        if (item.isMissing) return false
+        val path = item.filePath
+        if (!path.isNullOrBlank()) {
+            val file = File(path)
+            return file.exists() && file.canWrite()
+        }
+        return item.id.startsWith("saf-")
+    }
+
+    suspend fun deleteItem(item: MediaItem): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val path = item.filePath
+            if (!path.isNullOrBlank()) {
+                val file = File(path)
+                val deleted = if (file.isDirectory) file.deleteRecursively() else file.delete()
+                if (!deleted && file.exists()) error("无法删除")
+                return@runCatching
+            }
+            val doc = DocumentFile.fromSingleUri(context, item.uri)
+                ?: DocumentFile.fromTreeUri(context, item.uri)
+            if (doc == null || !doc.delete()) error("无法删除")
+        }
+    }
+
+    suspend fun renameItem(item: MediaItem, rawName: String): Result<MediaItem> =
+        withContext(Dispatchers.IO) {
+            val name = sanitizeName(rawName) ?: return@withContext Result.failure(IllegalArgumentException("名称无效"))
+            runCatching {
+                val path = item.filePath
+                if (!path.isNullOrBlank()) {
+                    val src = File(path)
+                    val dest = File(src.parentFile, name)
+                    if (dest.exists()) error("已有同名文件")
+                    if (!src.renameTo(dest)) error("无法重命名")
+                    return@runCatching if (dest.isDirectory) {
+                        item.copy(
+                            id = "file-folder-${dest.absolutePath}",
+                            uri = fileUri(dest),
+                            name = dest.name,
+                            filePath = dest.absolutePath,
+                        )
+                    } else {
+                        fileItem(dest, classify(dest.name, null), dest.parentFile ?: dest)
+                    }
+                }
+                val doc = DocumentFile.fromSingleUri(context, item.uri)
+                    ?: error("无法重命名")
+                if (!doc.renameTo(name)) error("无法重命名")
+                item.copy(name = doc.name ?: name, uri = doc.uri)
+            }
+        }
+
+    suspend fun moveItem(item: MediaItem, dest: CreateParent): Result<MediaItem> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                when (dest) {
+                    is CreateParent.Path -> {
+                        val destDir = File(dest.path)
+                        if (!destDir.isDirectory || !destDir.canWrite()) error("目标目录不可写")
+                        val path = item.filePath
+                        if (!path.isNullOrBlank()) {
+                            val src = File(path)
+                            val target = File(destDir, uniqueName(destDir, src.name))
+                            if (!src.renameTo(target)) {
+                                if (src.isDirectory) error("无法移动文件夹")
+                                src.copyTo(target, overwrite = false)
+                                if (!src.delete()) target.delete()
+                                if (!target.exists()) error("无法移动")
+                            }
+                            return@runCatching if (target.isDirectory) {
+                                item.copy(
+                                    id = "file-folder-${target.absolutePath}",
+                                    uri = fileUri(target),
+                                    name = target.name,
+                                    filePath = target.absolutePath,
+                                )
+                            } else {
+                                fileItem(target, classify(target.name, null), destDir)
+                            }
+                        }
+                        error("无法移动这个文件")
+                    }
+                    is CreateParent.Saf -> {
+                        val dir = DocumentFile.fromTreeUri(context, dest.uri)
+                            ?: DocumentFile.fromSingleUri(context, dest.uri)
+                            ?: error("无法打开目标目录")
+                        val src = DocumentFile.fromSingleUri(context, item.uri) ?: error("无法打开文件")
+                        val created = if (src.isDirectory) {
+                            error("暂不支持移动该文件夹")
+                        } else {
+                            dir.createFile(src.type ?: "application/octet-stream", src.name ?: item.name)
+                                ?: error("无法移动")
+                        }
+                        context.contentResolver.openInputStream(src.uri)?.use { input ->
+                            context.contentResolver.openOutputStream(created.uri)?.use { input.copyTo(it) }
+                        } ?: error("无法移动")
+                        src.delete()
+                        item.copy(
+                            id = "saf-${created.uri}",
+                            uri = created.uri,
+                            name = created.name ?: item.name,
+                            parentUri = dir.uri,
+                            filePath = null,
+                        )
+                    }
+                }
+            }
+        }
+
+    suspend fun listChildFolders(parent: CreateParent): List<MediaItem> = withContext(Dispatchers.IO) {
+        when (parent) {
+            is CreateParent.Path -> {
+                val dir = File(parent.path)
+                dir.listFiles()
+                    ?.filter { it.isDirectory }
+                    ?.map { file ->
+                        MediaItem(
+                            id = "file-folder-${file.absolutePath}",
+                            uri = fileUri(file),
+                            name = file.name,
+                            mimeType = null,
+                            size = 0L,
+                            dateModified = file.lastModified(),
+                            type = MediaType.FOLDER,
+                            childCount = file.listFiles()?.size ?: 0,
+                            filePath = file.absolutePath,
+                        )
+                    }
+                    ?.sortedBy { it.name.lowercase() }
+                    .orEmpty()
+            }
+            is CreateParent.Saf -> {
+                val dir = DocumentFile.fromTreeUri(context, parent.uri)
+                    ?: DocumentFile.fromSingleUri(context, parent.uri)
+                    ?: return@withContext emptyList()
+                dir.listFiles()
+                    .filter { it.isDirectory }
+                    .map { file ->
+                        MediaItem(
+                            id = "saf-folder-${file.uri}",
+                            uri = file.uri,
+                            name = file.name ?: "文件夹",
+                            mimeType = null,
+                            size = 0L,
+                            dateModified = file.lastModified(),
+                            type = MediaType.FOLDER,
+                            parentUri = dir.uri,
+                        )
+                    }
+                    .sortedBy { it.name.lowercase() }
+            }
+        }
+    }
+
+    fun canWriteDirectory(path: String?): Boolean {
+        if (path.isNullOrBlank()) return false
+        val dir = File(path)
+        return dir.isDirectory && dir.canWrite()
+    }
+
+    suspend fun createFolder(parent: CreateParent, rawName: String): Result<MediaItem> =
+        withContext(Dispatchers.IO) {
+            val name = sanitizeName(rawName) ?: return@withContext Result.failure(IllegalArgumentException("名称无效"))
+            runCatching { createInParent(parent, name, directory = true, content = "") }
+        }
+
+    suspend fun createTextFile(
+        parent: CreateParent,
+        rawName: String,
+        defaultExtension: String,
+        content: String,
+    ): Result<MediaItem> = withContext(Dispatchers.IO) {
+        var name = sanitizeName(rawName) ?: return@withContext Result.failure(IllegalArgumentException("名称无效"))
+        if (!name.contains('.')) {
+            name = "$name.$defaultExtension"
+        }
+        runCatching { createInParent(parent, name, directory = false, content = content) }
+    }
+
+    suspend fun findChild(parent: CreateParent, name: String): MediaItem? = withContext(Dispatchers.IO) {
+        when (parent) {
+            is CreateParent.Path -> {
+                val file = File(parent.path, name)
+                if (!file.exists()) return@withContext null
+                if (file.isDirectory) {
+                    MediaItem(
+                        id = "file-folder-${file.absolutePath}",
+                        uri = fileUri(file),
+                        name = file.name,
+                        mimeType = null,
+                        size = 0L,
+                        dateModified = file.lastModified(),
+                        type = MediaType.FOLDER,
+                        childCount = file.listFiles()?.size ?: 0,
+                        filePath = file.absolutePath,
+                    )
+                } else {
+                    fileItem(file, classify(file.name, null), File(parent.path))
+                }
+            }
+            is CreateParent.Saf -> {
+                val dir = DocumentFile.fromTreeUri(context, parent.uri)
+                    ?: DocumentFile.fromSingleUri(context, parent.uri)
+                    ?: return@withContext null
+                val child = dir.listFiles().firstOrNull { it.name == name } ?: return@withContext null
+                val childName = child.name ?: name
+                MediaItem(
+                    id = if (child.isDirectory) "saf-folder-${child.uri}" else "saf-${child.uri}",
+                    uri = child.uri,
+                    name = childName,
+                    mimeType = child.type,
+                    size = child.length(),
+                    dateModified = child.lastModified(),
+                    type = if (child.isDirectory) MediaType.FOLDER else classify(childName, child.type),
+                    parentUri = dir.uri,
+                    childCount = if (child.isDirectory) child.listFiles().size else 0,
+                )
+            }
+        }
+    }
+
+    private fun createInParent(
+        parent: CreateParent,
+        name: String,
+        directory: Boolean,
+        content: String,
+    ): MediaItem {
+        return when (parent) {
+            is CreateParent.Path -> {
+                val dir = File(parent.path)
+                if (!dir.isDirectory || !dir.canWrite()) error("当前目录不可写")
+                val unique = uniqueName(dir, name)
+                val target = File(dir, unique)
+                if (directory) {
+                    if (!target.mkdir()) error("无法创建文件夹")
+                    MediaItem(
+                        id = "file-folder-${target.absolutePath}",
+                        uri = fileUri(target),
+                        name = target.name,
+                        mimeType = null,
+                        size = 0L,
+                        dateModified = target.lastModified(),
+                        type = MediaType.FOLDER,
+                        filePath = target.absolutePath,
+                    )
+                } else {
+                    target.writeText(content, Charsets.UTF_8)
+                    fileItem(target, classify(target.name, null), dir)
+                }
+            }
+            is CreateParent.Saf -> {
+                val dir = DocumentFile.fromTreeUri(context, parent.uri)
+                    ?: DocumentFile.fromSingleUri(context, parent.uri)
+                    ?: error("无法打开目录")
+                val unique = uniqueSafName(dir, name)
+                val created = if (directory) {
+                    dir.createDirectory(unique) ?: error("无法创建文件夹")
+                } else {
+                    val base = unique.substringBeforeLast('.', unique)
+                    dir.createFile("text/plain", base) ?: error("无法创建文件")
+                }
+                if (!directory && content.isNotEmpty()) {
+                    context.contentResolver.openOutputStream(created.uri, "wt")?.use {
+                        it.write(content.toByteArray(Charsets.UTF_8))
+                    }
+                }
+                val createdName = created.name ?: unique
+                MediaItem(
+                    id = if (directory) "saf-folder-${created.uri}" else "saf-${created.uri}",
+                    uri = created.uri,
+                    name = createdName,
+                    mimeType = created.type,
+                    size = created.length(),
+                    dateModified = created.lastModified(),
+                    type = if (directory) MediaType.FOLDER else classify(createdName, created.type),
+                    parentUri = dir.uri,
+                    filePath = null,
+                )
+            }
+        }
+    }
+
+    private fun uniqueName(dir: File, name: String): String {
+        if (!File(dir, name).exists()) return name
+        val dot = name.lastIndexOf('.')
+        val base = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var index = 2
+        while (File(dir, "$base $index$ext").exists()) index++
+        return "$base $index$ext"
+    }
+
+    private fun uniqueSafName(dir: DocumentFile, name: String): String {
+        val existing = dir.listFiles().mapNotNull { it.name }.toHashSet()
+        if (name !in existing) return name
+        val dot = name.lastIndexOf('.')
+        val base = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var index = 2
+        while ("$base $index$ext" in existing) index++
+        return "$base $index$ext"
+    }
+
+    private fun sanitizeName(raw: String): String? {
+        val name = raw.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        if (name.isEmpty() || name == "." || name == "..") return null
+        return name
+    }
+
     fun classify(name: String, mime: String?): MediaType {
         val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
         val mimeType = mime?.lowercase().orEmpty()
         return when {
             mimeType.startsWith("image/") || ext in IMAGE_EXT -> MediaType.IMAGE
             mimeType.startsWith("video/") || ext in VIDEO_EXT -> MediaType.VIDEO
+            mimeType.startsWith("audio/") || ext in AUDIO_EXT -> MediaType.AUDIO
             isWebPage(name, mime) -> MediaType.WEB
+            isPdf(name, mime) -> MediaType.PDF
+            isBook(name, mime) -> MediaType.BOOK
+            isArchive(name, mime) -> MediaType.ARCHIVE
+            isApk(name, mime) -> MediaType.APK
             mimeType.startsWith("text/") || ext in TEXT_EXT -> MediaType.TEXT
             else -> MediaType.FILE
         }
@@ -500,7 +860,7 @@ class MediaRepository(private val context: Context) {
                     bucketId = bucketId,
                     coverUri = file.uri,
                     childCount = 1,
-                    filePath = file.filePath,
+                    filePath = file.filePath?.let { path -> File(path).parent },
                     volumeId = file.volumeId,
                 )
             } else {
@@ -561,6 +921,30 @@ class MediaRepository(private val context: Context) {
         )
     }
 
+    private fun queryAudio(volumeName: String?, volumeId: String, volumePath: String?): List<MediaItem> {
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && volumeName != null) {
+            MediaStore.Audio.Media.getContentUri(volumeName)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        } else {
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        }
+        return queryMediaStore(
+            collection = collection,
+            idColumn = MediaStore.Audio.Media._ID,
+            nameColumn = MediaStore.Audio.Media.DISPLAY_NAME,
+            mimeColumn = MediaStore.Audio.Media.MIME_TYPE,
+            sizeColumn = MediaStore.Audio.Media.SIZE,
+            dateColumn = MediaStore.Audio.Media.DATE_MODIFIED,
+            durationColumn = MediaStore.Audio.Media.DURATION,
+            bucketIdColumn = MediaStore.Audio.Media.BUCKET_ID,
+            bucketNameColumn = MediaStore.Audio.Media.BUCKET_DISPLAY_NAME,
+            type = MediaType.AUDIO,
+            volumeId = volumeId,
+            volumePath = volumePath,
+        )
+    }
+
     private fun queryDocuments(volumeName: String?, volumeId: String): List<MediaItem> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || volumeName == null) return emptyList()
         val collection = MediaStore.Files.getContentUri(volumeName)
@@ -588,7 +972,12 @@ class MediaRepository(private val context: Context) {
                     val name = cursor.getString(nameIdx).orEmpty()
                     val mime = cursor.getString(mimeIdx)
                     val type = classify(name, mime)
-                    if (type != MediaType.WEB && type != MediaType.TEXT) continue
+                    if (type == MediaType.IMAGE || type == MediaType.VIDEO ||
+                        type == MediaType.AUDIO || type == MediaType.FOLDER ||
+                        type == MediaType.FILE
+                    ) {
+                        continue
+                    }
                     val id = cursor.getLong(idIdx)
                     items += MediaItem(
                         id = "doc-$volumeId-$id",
@@ -821,8 +1210,13 @@ class MediaRepository(private val context: Context) {
         private const val MAX_SAF_FILES = 2000
         private val IMAGE_EXT = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif")
         private val VIDEO_EXT = setOf("mp4", "mkv", "webm", "3gp", "avi", "mov")
+        private val AUDIO_EXT = setOf("mp3", "flac", "aac", "wav", "ogg", "m4a", "wma", "ape", "amr")
         private val WEB_EXT = setOf("html", "htm", "xhtml", "mhtml", "shtml", "mht")
         private val TEXT_EXT = setOf("txt", "md", "json", "xml", "log", "csv")
+        private val PDF_EXT = setOf("pdf")
+        private val BOOK_EXT = setOf("epub")
+        private val ARCHIVE_EXT = setOf("zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "jar")
+        private val APK_EXT = setOf("apk")
 
         fun isWebPage(name: String, mime: String?): Boolean {
             val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
@@ -832,5 +1226,53 @@ class MediaRepository(private val context: Context) {
                 mimeType.contains("html") ||
                 ext in WEB_EXT
         }
+
+        fun isPdf(name: String, mime: String?): Boolean {
+            val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            val mimeType = mime?.lowercase().orEmpty()
+            return ext in PDF_EXT || mimeType == "application/pdf"
+        }
+
+        fun isBook(name: String, mime: String?): Boolean {
+            val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            val mimeType = mime?.lowercase().orEmpty()
+            return ext in BOOK_EXT || mimeType == "application/epub+zip"
+        }
+
+        fun isArchive(name: String, mime: String?): Boolean {
+            val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            val mimeType = mime?.lowercase().orEmpty()
+            return ext in ARCHIVE_EXT ||
+                mimeType == "application/zip" ||
+                mimeType == "application/x-7z-compressed" ||
+                mimeType == "application/x-rar-compressed" ||
+                mimeType.contains("zip")
+        }
+
+        fun isApk(name: String, mime: String?): Boolean {
+            val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            val mimeType = mime?.lowercase().orEmpty()
+            return ext in APK_EXT || mimeType == "application/vnd.android.package-archive"
+        }
+
+        fun isAudio(name: String, mime: String?): Boolean {
+            val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            val mimeType = mime?.lowercase().orEmpty()
+            return mimeType.startsWith("audio/") || ext in AUDIO_EXT
+        }
+
+        fun isPlainTxt(name: String): Boolean {
+            return name.substringAfterLast('.', missingDelimiterValue = "").lowercase() == "txt"
+        }
+
+        fun isZipArchive(name: String): Boolean {
+            val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            return ext == "zip" || ext == "jar"
+        }
     }
+}
+
+sealed class CreateParent {
+    data class Path(val path: String) : CreateParent()
+    data class Saf(val uri: Uri) : CreateParent()
 }

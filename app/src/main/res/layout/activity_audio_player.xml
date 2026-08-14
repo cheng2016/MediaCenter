@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/md_black"
+    android:gravity="center_horizontal"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/md_black"
+        app:navigationContentDescription="@string/cd_back"
+        app:navigationIcon="@drawable/ic_back"
+        app:titleTextColor="@color/md_on_surface" />
+
+    <View
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <com.google.android.material.card.MaterialCardView
+        android:layout_width="280dp"
+        android:layout_height="280dp"
+        app:cardBackgroundColor="@color/md_card"
+        app:cardCornerRadius="24dp"
+        app:cardElevation="8dp">
+
+        <ImageView
+            android:id="@+id/cover"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@string/filter_music"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_nav_music" />
+    </com.google.android.material.card.MaterialCardView>
+
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="28dp"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:maxLines="2"
+        android:paddingStart="32dp"
+        android:paddingEnd="32dp"
+        android:textColor="@color/md_on_surface"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/index"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center"
+        android:textColor="@color/md_on_surface_variant"
+        android:textSize="14sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="28dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp">
+
+        <TextView
+            android:id="@+id/position"
+            android:layout_width="48dp"
+            android:layout_height="wrap_content"
+            android:text="0:00"
+            android:textColor="@color/md_on_surface_variant"
+            android:textSize="12sp" />
+
+        <SeekBar
+            android:id="@+id/seekBar"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:max="1000"
+            android:progressTint="@color/md_primary"
+            android:thumbTint="@color/md_primary" />
+
+        <TextView
+            android:id="@+id/duration"
+            android:layout_width="48dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="0:00"
+            android:textColor="@color/md_on_surface_variant"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/buttonPrev"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:background="@drawable/bg_toolbar_focus"
+            android:contentDescription="@string/audio_prev"
+            android:focusable="true"
+            android:focusableInTouchMode="false"
+            android:src="@drawable/ic_skip_previous"
+            app:tint="@color/md_on_surface" />
+
+        <ImageButton
+            android:id="@+id/buttonPlay"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:background="@drawable/bg_play"
+            android:contentDescription="@string/audio_play"
+            android:focusable="true"
+            android:focusableInTouchMode="false"
+            android:src="@drawable/ic_play"
+            app:tint="@color/md_on_primary" />
+
+        <ImageButton
+            android:id="@+id/buttonNext"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:background="@drawable/bg_toolbar_focus"
+            android:contentDescription="@string/audio_next"
+            android:focusable="true"
+            android:focusableInTouchMode="false"
+            android:src="@drawable/ic_skip_next"
+            app:tint="@color/md_on_surface" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+</LinearLayout>

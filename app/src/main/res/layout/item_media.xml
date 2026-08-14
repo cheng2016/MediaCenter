@@ -7,7 +7,7 @@
     android:layout_margin="4dp"
     android:clickable="true"
     android:focusable="true"
-    android:focusableInTouchMode="true"
+    android:focusableInTouchMode="false"
     android:nextFocusLeft="@id/navList"
     app:cardBackgroundColor="@color/md_card"
     app:cardCornerRadius="14dp"
@@ -38,6 +38,18 @@
             app:layout_constraintBottom_toBottomOf="@id/thumb"
             app:layout_constraintEnd_toEndOf="@id/thumb"
             app:layout_constraintStart_toStartOf="@id/thumb" />
+
+        <ImageView
+            android:id="@+id/favorite"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_margin="8dp"
+            android:contentDescription="@string/cd_favorite"
+            android:src="@drawable/ic_favorite_small"
+            android:visibility="gone"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:visibility="visible" />
 
         <ImageView
             android:id="@+id/badge"

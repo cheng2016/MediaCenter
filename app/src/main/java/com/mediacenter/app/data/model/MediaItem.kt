@@ -18,6 +18,8 @@ data class MediaItem(
     val childCount: Int = 0,
     val filePath: String? = null,
     val volumeId: String? = null,
+    val isFavorite: Boolean = false,
+    val isMissing: Boolean = false,
 ) {
     val isSafFolder: Boolean get() = id.startsWith("saf-folder")
     val isFileFolder: Boolean

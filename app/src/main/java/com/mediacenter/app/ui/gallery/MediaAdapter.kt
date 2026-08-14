@@ -10,6 +10,7 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.mediacenter.app.R
+import com.mediacenter.app.data.MediaRepository
 import com.mediacenter.app.data.model.MediaItem
 import com.mediacenter.app.data.model.MediaType
 import com.mediacenter.app.databinding.ItemFileRowBinding
@@ -22,6 +23,7 @@ import java.util.Locale
 class MediaAdapter(
     private val onClick: (MediaItem) -> Unit,
     private val onFocusSidebar: () -> Unit = {},
+    private val onItemMenu: (android.view.View, MediaItem) -> Unit = { _, _ -> },
 ) : ListAdapter<MediaItem, RecyclerView.ViewHolder>(Diff) {
 
     var listMode: Boolean = true
@@ -48,16 +50,19 @@ class MediaAdapter(
                 ItemFolderRowBinding.inflate(inflater, parent, false),
                 onClick,
                 onFocusSidebar,
+                onItemMenu,
             )
             VIEW_FILE_ROW -> FileRowHolder(
                 ItemFileRowBinding.inflate(inflater, parent, false),
                 onClick,
                 onFocusSidebar,
+                onItemMenu,
             )
             else -> FileGridHolder(
                 ItemMediaBinding.inflate(inflater, parent, false),
                 onClick,
                 onFocusSidebar,
+                onItemMenu,
             )
         }
     }
@@ -75,6 +80,7 @@ class MediaAdapter(
         private val binding: ItemFolderRowBinding,
         private val onClick: (MediaItem) -> Unit,
         private val onFocusSidebar: () -> Unit,
+        private val onItemMenu: (android.view.View, MediaItem) -> Unit,
     ) : RecyclerView.ViewHolder(binding.root) {
         fun bind(item: MediaItem) {
             Dpad.bindItem(binding.root)
@@ -84,9 +90,19 @@ class MediaAdapter(
                 formatDate(item.dateModified),
                 item.childCount,
             )
+            binding.root.alpha = if (item.isMissing) 0.45f else 1f
             binding.root.setOnClickListener { onClick(item) }
+            binding.root.setOnLongClickListener {
+                onItemMenu(binding.root, item)
+                true
+            }
             binding.root.setOnKeyListener { view, keyCode, event ->
-                Dpad.handleContentKey(view, keyCode, event, onFocusSidebar)
+                if (event.action == android.view.KeyEvent.ACTION_DOWN && Dpad.isFavoriteAction(keyCode)) {
+                    onItemMenu(view, item)
+                    true
+                } else {
+                    Dpad.handleContentKey(view, keyCode, event, onFocusSidebar)
+                }
             }
         }
     }
@@ -95,15 +111,33 @@ class MediaAdapter(
         private val binding: ItemFileRowBinding,
         private val onClick: (MediaItem) -> Unit,
         private val onFocusSidebar: () -> Unit,
+        private val onItemMenu: (android.view.View, MediaItem) -> Unit,
     ) : RecyclerView.ViewHolder(binding.root) {
         fun bind(item: MediaItem) {
             Dpad.bindItem(binding.root)
+            binding.favorite.isVisible = item.isFavorite && !item.isMissing
             binding.name.text = item.name
-            binding.meta.text = binding.root.resources.getString(
-                R.string.file_meta,
-                formatDate(item.dateModified),
-                typeLabel(item.type),
-            )
+            binding.meta.text = when {
+                item.isMissing -> binding.root.resources.getString(R.string.file_missing)
+                item.type == MediaType.ARCHIVE && !MediaRepository.isZipArchive(item.name) ->
+                    binding.root.resources.getString(
+                        R.string.file_meta,
+                        formatDate(item.dateModified),
+                        binding.root.resources.getString(R.string.archive_unsupported_label),
+                    )
+                else -> binding.root.resources.getString(
+                    R.string.file_meta,
+                    formatDate(item.dateModified),
+                    typeLabel(item.type),
+                )
+            }
+            binding.root.alpha = if (item.isMissing ||
+                (item.type == MediaType.ARCHIVE && !MediaRepository.isZipArchive(item.name))
+            ) {
+                0.45f
+            } else {
+                1f
+            }
             when (item.type) {
                 MediaType.IMAGE, MediaType.VIDEO -> {
                     binding.icon.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -112,6 +146,11 @@ class MediaAdapter(
                         .centerCrop()
                         .placeholder(R.drawable.bg_file_thumb)
                         .into(binding.icon)
+                }
+                MediaType.AUDIO -> {
+                    Glide.with(binding.icon).clear(binding.icon)
+                    binding.icon.scaleType = ImageView.ScaleType.CENTER
+                    binding.icon.setImageResource(R.drawable.ic_nav_music)
                 }
                 MediaType.WEB -> {
                     Glide.with(binding.icon).clear(binding.icon)
@@ -123,6 +162,21 @@ class MediaAdapter(
                     binding.icon.scaleType = ImageView.ScaleType.CENTER
                     binding.icon.setImageResource(R.drawable.ic_nav_text)
                 }
+                MediaType.PDF, MediaType.BOOK -> {
+                    Glide.with(binding.icon).clear(binding.icon)
+                    binding.icon.scaleType = ImageView.ScaleType.CENTER
+                    binding.icon.setImageResource(R.drawable.ic_nav_book)
+                }
+                MediaType.ARCHIVE -> {
+                    Glide.with(binding.icon).clear(binding.icon)
+                    binding.icon.scaleType = ImageView.ScaleType.CENTER
+                    binding.icon.setImageResource(R.drawable.ic_nav_archive)
+                }
+                MediaType.APK -> {
+                    Glide.with(binding.icon).clear(binding.icon)
+                    binding.icon.scaleType = ImageView.ScaleType.CENTER
+                    binding.icon.setImageResource(R.drawable.ic_nav_apk)
+                }
                 MediaType.FILE -> {
                     Glide.with(binding.icon).clear(binding.icon)
                     binding.icon.scaleType = ImageView.ScaleType.CENTER
@@ -131,8 +185,17 @@ class MediaAdapter(
                 MediaType.FOLDER -> Unit
             }
             binding.root.setOnClickListener { onClick(item) }
+            binding.root.setOnLongClickListener {
+                onItemMenu(binding.root, item)
+                true
+            }
             binding.root.setOnKeyListener { view, keyCode, event ->
-                Dpad.handleContentKey(view, keyCode, event, onFocusSidebar)
+                if (event.action == android.view.KeyEvent.ACTION_DOWN && Dpad.isFavoriteAction(keyCode)) {
+                    onItemMenu(view, item)
+                    true
+                } else {
+                    Dpad.handleContentKey(view, keyCode, event, onFocusSidebar)
+                }
             }
         }
     }
@@ -141,10 +204,13 @@ class MediaAdapter(
         private val binding: ItemMediaBinding,
         private val onClick: (MediaItem) -> Unit,
         private val onFocusSidebar: () -> Unit,
+        private val onItemMenu: (android.view.View, MediaItem) -> Unit,
     ) : RecyclerView.ViewHolder(binding.root) {
         fun bind(item: MediaItem) {
             Dpad.bindItem(binding.root)
+            binding.favorite.isVisible = item.isFavorite && !item.isMissing
             binding.name.text = item.name
+            binding.root.alpha = if (item.isMissing) 0.45f else 1f
             binding.badge.isVisible = item.type == MediaType.VIDEO
             binding.badge.setImageResource(R.drawable.ic_badge_video)
             binding.thumb.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -154,12 +220,21 @@ class MediaAdapter(
                 .placeholder(R.drawable.bg_thumb)
                 .into(binding.thumb)
             binding.root.setOnClickListener { onClick(item) }
+            binding.root.setOnLongClickListener {
+                onItemMenu(binding.root, item)
+                true
+            }
             binding.root.setOnFocusChangeListener { _, hasFocus ->
                 binding.root.strokeWidth = if (hasFocus) 4 else 0
                 binding.root.strokeColor = ContextCompat.getColor(binding.root.context, R.color.md_primary)
             }
             binding.root.setOnKeyListener { view, keyCode, event ->
-                Dpad.handleContentKey(view, keyCode, event, onFocusSidebar)
+                if (event.action == android.view.KeyEvent.ACTION_DOWN && Dpad.isFavoriteAction(keyCode)) {
+                    onItemMenu(view, item)
+                    true
+                } else {
+                    Dpad.handleContentKey(view, keyCode, event, onFocusSidebar)
+                }
             }
         }
     }
@@ -187,8 +262,13 @@ class MediaAdapter(
             return when (type) {
                 MediaType.IMAGE -> "图片"
                 MediaType.VIDEO -> "视频"
+                MediaType.AUDIO -> "音乐"
                 MediaType.WEB -> "网页"
                 MediaType.TEXT -> "文本"
+                MediaType.PDF -> "PDF"
+                MediaType.BOOK -> "电子书"
+                MediaType.ARCHIVE -> "压缩包"
+                MediaType.APK -> "安装包"
                 MediaType.FOLDER -> "文件夹"
                 MediaType.FILE -> "文件"
             }
