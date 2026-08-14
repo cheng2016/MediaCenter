@@ -27,4 +27,7 @@ data class GalleryUiState(
     val showSearch: Boolean = false,
     val searchHint: String = "",
     val canCreate: Boolean = false,
+    val albumCards: Boolean = false,
+    val groupByDate: Boolean = false,
+    val canToggleView: Boolean = false,
 )

@@ -282,6 +282,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun toggleListMode() {
+        val filter = _uiState.value.filter
+        if (filter != MediaFilter.IMAGE && filter != MediaFilter.VIDEO) return
         forceListMode = !_uiState.value.listMode
         publish()
     }
@@ -306,10 +308,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val folder = folderStack.lastOrNull()
         val rawItems = sortItems(visibleItems(filter, folder))
         val showingFolders = filter == MediaFilter.ALL && folder == null
-        val autoList = showingFolders || folder != null ||
-            filter == MediaFilter.WEB || filter == MediaFilter.TEXT || filter == MediaFilter.BOOK ||
-            filter == MediaFilter.MUSIC || filter == MediaFilter.ARCHIVE || filter == MediaFilter.APK ||
-            filter == MediaFilter.RECENT || filter == MediaFilter.FAVORITE || filter == MediaFilter.SEARCH
+        val mediaTimeline = filter == MediaFilter.IMAGE || filter == MediaFilter.VIDEO
+        val listMode = if (mediaTimeline) forceListMode ?: false else true
         val volume = selectedVolumeId?.let { id -> library.volumes.firstOrNull { it.id == id } }
         viewModelScope.launch {
             val items = withContext(Dispatchers.IO) {
@@ -335,7 +335,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     title = folder?.name ?: defaultTitle(filter, volume),
                     subtitle = subtitle(filter, folder, items),
                     showingFolders = showingFolders,
-                    listMode = forceListMode ?: autoList,
+                    listMode = listMode,
+                    albumCards = false,
+                    groupByDate = mediaTimeline && !listMode,
+                    canToggleView = mediaTimeline,
                     sortMode = sortMode,
                     canGoBack = folder != null,
                     loading = false,
@@ -399,8 +402,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 if (query.isEmpty()) children
                 else children.filter { it.name.contains(query, ignoreCase = true) }
             }
-            filter == MediaFilter.IMAGE -> library.files.filter { it.type == MediaType.IMAGE }
-            filter == MediaFilter.VIDEO -> library.files.filter { it.type == MediaType.VIDEO }
+            filter == MediaFilter.IMAGE && folder == null ->
+                library.files.filter { it.type == MediaType.IMAGE }
+            filter == MediaFilter.VIDEO && folder == null ->
+                library.files.filter { it.type == MediaType.VIDEO }
+            filter == MediaFilter.IMAGE && folder != null ->
+                mediaFolderItems(folder, MediaType.IMAGE)
+            filter == MediaFilter.VIDEO && folder != null ->
+                mediaFolderItems(folder, MediaType.VIDEO)
             filter == MediaFilter.WEB -> library.files.filter { it.type == MediaType.WEB }
             filter == MediaFilter.TEXT -> library.files.filter { it.type == MediaType.TEXT }
             filter == MediaFilter.BOOK -> library.files.filter {
@@ -438,8 +447,28 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         safChildren.putAll(next)
     }
 
+    private fun mediaFolderItems(folder: MediaItem, type: MediaType): List<MediaItem> {
+        val children = folderContents(folder).filter { it.type == type || it.type == MediaType.FOLDER }
+        val query = searchQuery.trim()
+        return if (query.isEmpty()) children
+        else children.filter { it.name.contains(query, ignoreCase = true) }
+    }
+
     private fun folderContents(folder: MediaItem): List<MediaItem> {
-        safChildren[folder.id]?.let { return it }
+        if (folder.id.startsWith("album-")) {
+            val fromLibrary = when {
+                folder.bucketId != null -> repository.albumItems(library.files, folder.bucketId)
+                folder.filePath != null -> library.files.filter { file ->
+                    file.filePath?.let { path ->
+                        val parent = java.io.File(path).let { if (it.isFile) it.parent else it.absolutePath }
+                        parent == folder.filePath
+                    } == true
+                }
+                else -> emptyList()
+            }
+            if (fromLibrary.isNotEmpty()) return fromLibrary
+        }
+        safChildren[folder.id]?.takeIf { it.isNotEmpty() }?.let { return it }
         return when {
             folder.volumeId != null -> library.volumeRoots[folder.volumeId].orEmpty()
             else -> repository.albumItems(library.files, folder.bucketId)

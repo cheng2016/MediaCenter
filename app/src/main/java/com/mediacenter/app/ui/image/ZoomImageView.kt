@@ -65,7 +65,7 @@ class ZoomImageView @JvmOverloads constructor(
 
     private fun resetMatrix() {
         val d = drawable ?: return
-        if (width == 0 || height == 0) return
+        if (width == 0 || height == 0 || d.intrinsicWidth <= 0 || d.intrinsicHeight <= 0) return
         val scale = minOf(width.toFloat() / d.intrinsicWidth, height.toFloat() / d.intrinsicHeight)
         val dx = (width - d.intrinsicWidth * scale) / 2f
         val dy = (height - d.intrinsicHeight * scale) / 2f

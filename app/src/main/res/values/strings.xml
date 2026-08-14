@@ -5,7 +5,7 @@
     <string name="nav_storage">内部存储</string>
     <string name="cd_sidebar">侧栏</string>
     <string name="folder_meta">%1$s | %2$d项</string>
-    <string name="file_meta">%1$s | %2$s</string>
+    <string name="file_meta">%1$s | %2$s | %3$s</string>
     <string name="filter_all">文件夹</string>
     <string name="filter_image">图片</string>
     <string name="filter_video">视频</string>
@@ -67,6 +67,8 @@
     <string name="permission_all_files">去开启全部文件访问</string>
     <string name="permission_grant">授予权限</string>
     <string name="empty_gallery">还没有可显示的文件</string>
+    <string name="empty_image">还没有图片</string>
+    <string name="empty_video">还没有视频</string>
     <string name="empty_folders">还没有文件夹\n授权后会显示相册目录，也可以手动添加</string>
     <string name="empty_need_folder">添加一个文件夹后，即可浏览其中的网页和文本</string>
     <string name="empty_web">暂无网页文件</string>
@@ -74,11 +76,13 @@
     <string name="empty_usb">已检测到U盘，授权后即可浏览里面的文件</string>
     <string name="action_open_usb">打开U盘</string>
     <string name="folder_count">%d 项</string>
+    <string name="section_header">%1$s | %2$d项</string>
     <string name="text_truncated">文件较大，仅显示前 512KB</string>
     <string name="cd_back">返回</string>
     <string name="cd_badge">类型标记</string>
     <string name="cd_folder">文件夹</string>
     <string name="no_app_to_open">没有可以打开此文件的应用</string>
+    <string name="media_open_failed">无法打开这个文件，可能已损坏</string>
     <string name="action_create">新建</string>
     <string name="create_folder">新建文件夹</string>
     <string name="create_text">新建文本</string>

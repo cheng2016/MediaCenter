@@ -48,9 +48,13 @@ class PdfViewerViewModel(
                     ?: materialize(target)?.let { ParcelFileDescriptor.open(it, ParcelFileDescriptor.MODE_READ_ONLY) }
             }.getOrNull()
             if (pfd == null) return@withLock "无法打开这份 PDF"
+            val pdf = runCatching { PdfRenderer(pfd) }.getOrElse {
+                runCatching { pfd.close() }
+                return@withLock "无法打开这份 PDF，文件可能已损坏或已加密"
+            }
             descriptor = pfd
-            renderer = PdfRenderer(pfd)
-            pageCount = renderer?.pageCount ?: 0
+            renderer = pdf
+            pageCount = pdf.pageCount
             currentPage = currentPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
             if (pageCount <= 0) "这份 PDF 没有可显示的页面" else null
         }
@@ -60,13 +64,17 @@ class PdfViewerViewModel(
         mutex.withLock {
             val pdf = renderer ?: return@withLock null
             if (pageIndex !in 0 until pdf.pageCount) return@withLock null
-            pdf.openPage(pageIndex).use { page ->
-                val w = width.coerceAtLeast(720)
-                val h = (w.toFloat() * page.height / page.width).toInt().coerceAtLeast(1)
-                val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                bitmap
-            }
+            runCatching {
+                pdf.openPage(pageIndex).use { page ->
+                    val pageWidth = page.width.coerceAtLeast(1)
+                    val pageHeight = page.height.coerceAtLeast(1)
+                    val w = width.coerceIn(320, 2048)
+                    val h = (w.toFloat() * pageHeight / pageWidth).toInt().coerceIn(1, 4096)
+                    val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    bitmap
+                }
+            }.getOrNull()
         }
     }
 

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
+import android.view.KeyEvent
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
@@ -88,6 +89,22 @@ class TextViewerActivity : BaseActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (viewModel.uiState.value.editing) return super.onKeyDown(keyCode, event)
+        val page = (binding.content.height * 0.85f).toInt().coerceAtLeast(80)
+        return when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
+                binding.content.scrollBy(0, page)
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_CHANNEL_UP -> {
+                binding.content.scrollBy(0, -page)
+                true
+            }
+            else -> super.onKeyDown(keyCode, event)
         }
     }
 

@@ -18,6 +18,7 @@ import com.mediacenter.app.R
 import com.mediacenter.app.data.model.MediaItem
 import com.mediacenter.app.databinding.ActivityPdfViewerBinding
 import com.mediacenter.app.databinding.ItemPdfPageBinding
+import com.mediacenter.app.ui.gallery.Dpad
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -51,7 +52,7 @@ class PdfViewerActivity : BaseActivity() {
                     updateTitle(position)
                 }
             })
-            binding.pager.requestFocus()
+            Dpad.requestFocusIfRemote(binding.pager)
         }
     }
 
@@ -63,11 +64,11 @@ class PdfViewerActivity : BaseActivity() {
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         val page = binding.pager.currentItem
         return when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_PAGE_UP -> {
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_CHANNEL_UP -> {
                 if (page > 0) binding.pager.currentItem = page - 1
                 true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_PAGE_DOWN -> {
+            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
                 if (page < viewModel.pageCount - 1) binding.pager.currentItem = page + 1
                 true
             }

@@ -4,13 +4,13 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="4dp"
+    android:layout_margin="3dp"
     android:clickable="true"
     android:focusable="true"
     android:focusableInTouchMode="false"
     android:nextFocusLeft="@id/navList"
     app:cardBackgroundColor="@color/md_card"
-    app:cardCornerRadius="14dp"
+    app:cardCornerRadius="16dp"
     app:cardElevation="0dp"
     app:strokeColor="@color/md_primary"
     app:strokeWidth="0dp">
@@ -76,9 +76,28 @@
             android:paddingBottom="8dp"
             android:textColor="@color/md_on_surface"
             android:textSize="11sp"
+            android:visibility="gone"
             app:layout_constraintBottom_toBottomOf="@id/thumb"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             tools:text="vacation.jpg" />
+
+        <TextView
+            android:id="@+id/duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_margin="6dp"
+            android:background="@drawable/bg_duration"
+            android:paddingStart="6dp"
+            android:paddingTop="2dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="2dp"
+            android:textColor="@color/md_on_surface"
+            android:textSize="11sp"
+            android:visibility="gone"
+            app:layout_constraintBottom_toBottomOf="@id/thumb"
+            app:layout_constraintEnd_toEndOf="parent"
+            tools:text="3:42"
+            tools:visibility="visible" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 </com.google.android.material.card.MaterialCardView>

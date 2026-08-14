@@ -14,6 +14,7 @@ import com.mediacenter.app.R
 import com.mediacenter.app.data.model.MediaItem
 import com.mediacenter.app.data.model.MediaType
 import com.mediacenter.app.databinding.ActivityArchiveViewerBinding
+import com.mediacenter.app.ui.gallery.Dpad
 import com.mediacenter.app.ui.gallery.MediaAdapter
 import com.mediacenter.app.ui.gallery.MediaIntents
 import kotlinx.coroutines.launch
@@ -66,11 +67,16 @@ class ArchiveViewerActivity : BaseActivity() {
             binding.progress.isVisible = true
             val items = viewModel.listEntries()
             binding.progress.isVisible = false
-            adapter.submitList(items)
+            adapter.submitMedia(items)
             binding.entryList.isVisible = items.isNotEmpty()
             binding.empty.isVisible = items.isEmpty()
             binding.empty.setText(R.string.empty_archive)
             binding.toolbar.title = viewModel.currentTitle()
+            if (items.isNotEmpty()) {
+                binding.entryList.post {
+                    Dpad.focusPosition(binding.entryList, 0)
+                }
+            }
         }
     }
 

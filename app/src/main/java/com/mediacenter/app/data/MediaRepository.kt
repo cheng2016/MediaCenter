@@ -120,9 +120,7 @@ class MediaRepository(private val context: Context) {
 
         Library(
             folders = storageFolders.distinctBy { it.id },
-            files = (mediaStoreFiles + scannedFiles)
-                .distinctBy { it.uri.toString() }
-                .sortedByDescending { it.dateModified },
+            files = mergeLibraryFiles(mediaStoreFiles, scannedFiles),
             volumes = volumes,
             volumeRoots = volumeRoots,
         )
@@ -190,6 +188,7 @@ class MediaRepository(private val context: Context) {
         val children = dir.listFiles() ?: return
         for (file in children) {
             if (out.size >= MAX_SAF_FILES) return
+            if (shouldSkip(file)) continue
             if (file.isDirectory) {
                 walkFiles(file, out, depth + 1)
                 continue
@@ -202,6 +201,7 @@ class MediaRepository(private val context: Context) {
         val children = dir.listFiles() ?: return emptyList()
         val items = ArrayList<MediaItem>()
         for (file in children) {
+            if (shouldSkip(file)) continue
             if (file.isDirectory) {
                 val nested = file.listFiles()?.size ?: 0
                 items += MediaItem(
@@ -232,6 +232,7 @@ class MediaRepository(private val context: Context) {
         }
         val items = ArrayList<MediaItem>()
         for (file in children) {
+            if (shouldSkipName(file.name)) continue
             if (file.isDirectory) {
                 val nested = try {
                     file.listFiles().size
@@ -416,14 +417,17 @@ class MediaRepository(private val context: Context) {
             @Suppress("DEPRECATION")
             context.contentResolver.query(
                 collection,
-                arrayOf(
-                    MediaStore.Files.FileColumns._ID,
-                    MediaStore.Files.FileColumns.DISPLAY_NAME,
-                    MediaStore.Files.FileColumns.MIME_TYPE,
-                    MediaStore.Files.FileColumns.SIZE,
-                    MediaStore.Files.FileColumns.DATE_MODIFIED,
-                    MediaStore.Files.FileColumns.DATA,
-                ),
+                buildList {
+                    add(MediaStore.Files.FileColumns._ID)
+                    add(MediaStore.Files.FileColumns.DISPLAY_NAME)
+                    add(MediaStore.Files.FileColumns.MIME_TYPE)
+                    add(MediaStore.Files.FileColumns.SIZE)
+                    add(MediaStore.Files.FileColumns.DATE_MODIFIED)
+                    add(MediaStore.Files.FileColumns.DATA)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        add(MediaStore.Files.FileColumns.DURATION)
+                    }
+                }.toTypedArray(),
                 "${MediaStore.Files.FileColumns.BUCKET_ID}=?",
                 arrayOf(bucketId),
                 "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC",
@@ -433,6 +437,7 @@ class MediaRepository(private val context: Context) {
                 val mimeIdx = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE)
                 val sizeIdx = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
                 val dateIdx = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
+                val durationIdx = cursor.getColumnIndex(MediaStore.Files.FileColumns.DURATION)
                 val dataIdx = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
                 while (cursor.moveToNext()) {
                     val name = cursor.getString(nameIdx).orEmpty()
@@ -451,6 +456,7 @@ class MediaRepository(private val context: Context) {
                         mimeType = mime,
                         size = cursor.getLong(sizeIdx),
                         dateModified = cursor.getLong(dateIdx) * 1000,
+                        durationMs = if (durationIdx >= 0) cursor.getLong(durationIdx) else 0L,
                         type = classify(name, mime),
                         bucketId = bucketId,
                         volumeId = volumeId,
@@ -471,26 +477,28 @@ class MediaRepository(private val context: Context) {
 
     suspend fun readText(uri: Uri, filePath: String? = null, maxBytes: Int = TEXT_MAX_BYTES): TextLoadResult =
         withContext(Dispatchers.IO) {
-            resolveLocalPath(uri, filePath)?.let { path ->
-                val file = File(path)
-                val bytes = file.readBytes()
-                val truncated = bytes.size > maxBytes
-                val size = minOf(bytes.size, maxBytes)
-                return@withContext TextLoadResult(String(bytes, 0, size, Charsets.UTF_8), truncated)
-            }
-            val resolver = context.contentResolver
-            resolver.openInputStream(uri)?.use { input ->
-                val buffer = ByteArray(maxBytes + 1)
-                var offset = 0
-                while (offset < buffer.size) {
-                    val read = input.read(buffer, offset, buffer.size - offset)
-                    if (read <= 0) break
-                    offset += read
+            runCatching {
+                val stream = resolveLocalPath(uri, filePath)?.let { path ->
+                    val file = File(path)
+                    if (!file.isFile) return@runCatching TextLoadResult("", false, "无法打开文件")
+                    file.inputStream()
+                } ?: context.contentResolver.openInputStream(uri)
+                if (stream == null) {
+                    return@runCatching TextLoadResult("", false, "无法打开文件")
                 }
-                val truncated = offset > maxBytes
-                val size = minOf(offset, maxBytes)
-                TextLoadResult(String(buffer, 0, size, Charsets.UTF_8), truncated)
-            } ?: TextLoadResult("", truncated = false, error = "无法打开文件")
+                stream.use { input ->
+                    val buffer = ByteArray(maxBytes + 1)
+                    var offset = 0
+                    while (offset < buffer.size) {
+                        val read = input.read(buffer, offset, buffer.size - offset)
+                        if (read <= 0) break
+                        offset += read
+                    }
+                    val truncated = offset > maxBytes
+                    val size = minOf(offset, maxBytes)
+                    TextLoadResult(String(buffer, 0, size, Charsets.UTF_8), truncated)
+                }
+            }.getOrElse { TextLoadResult("", false, it.message ?: "无法打开文件") }
         }
 
     suspend fun writeText(uri: Uri, filePath: String?, content: String): Result<Unit> =
@@ -860,7 +868,7 @@ class MediaRepository(private val context: Context) {
                     bucketId = bucketId,
                     coverUri = file.uri,
                     childCount = 1,
-                    filePath = file.filePath?.let { path -> File(path).parent },
+                    filePath = albumDirectory(file),
                     volumeId = file.volumeId,
                 )
             } else {
@@ -872,6 +880,53 @@ class MediaRepository(private val context: Context) {
             }
         }
         return albums.values.toList()
+    }
+
+    fun mediaAlbums(files: List<MediaItem>, type: MediaType): List<MediaItem> {
+        val groups = LinkedHashMap<String, ArrayList<MediaItem>>()
+        for (file in files) {
+            if (file.type != type) continue
+            groups.getOrPut(albumGroupKey(file)) { ArrayList() }.add(file)
+        }
+        return groups.map { (key, items) ->
+            val newest = items.maxBy { it.dateModified }
+            val bucketId = newest.bucketId
+            val dir = albumDirectory(newest)
+            MediaItem(
+                id = if (bucketId != null) "album-$bucketId" else "album-$key",
+                uri = newest.uri,
+                name = albumTitle(newest, dir),
+                mimeType = null,
+                size = 0L,
+                dateModified = newest.dateModified,
+                type = MediaType.FOLDER,
+                bucketId = bucketId,
+                bucketName = newest.bucketName,
+                coverUri = newest.uri,
+                childCount = items.size,
+                filePath = dir,
+                volumeId = newest.volumeId,
+            )
+        }.sortedByDescending { it.dateModified }
+    }
+
+    private fun albumGroupKey(file: MediaItem): String {
+        file.bucketId?.let { return "bucket:$it" }
+        albumDirectory(file)?.let { return "path:$it" }
+        file.parentUri?.let { return "parent:$it" }
+        return "other"
+    }
+
+    private fun albumDirectory(file: MediaItem): String? {
+        val path = file.filePath ?: return null
+        val target = File(path)
+        return if (target.isFile) target.parent else target.absolutePath
+    }
+
+    private fun albumTitle(file: MediaItem, dir: String?): String {
+        file.bucketName?.takeIf { it.isNotBlank() }?.let { return it }
+        dir?.let { File(it).name.takeIf { name -> name.isNotBlank() }?.let { name -> return name } }
+        return "相册"
     }
 
     private fun queryImages(volumeName: String?, volumeId: String, volumePath: String?): List<MediaItem> {
@@ -950,6 +1005,7 @@ class MediaRepository(private val context: Context) {
         val collection = MediaStore.Files.getContentUri(volumeName)
         val items = ArrayList<MediaItem>()
         try {
+            @Suppress("DEPRECATION")
             context.contentResolver.query(
                 collection,
                 arrayOf(
@@ -958,6 +1014,7 @@ class MediaRepository(private val context: Context) {
                     MediaStore.Files.FileColumns.MIME_TYPE,
                     MediaStore.Files.FileColumns.SIZE,
                     MediaStore.Files.FileColumns.DATE_MODIFIED,
+                    MediaStore.Files.FileColumns.DATA,
                 ),
                 null,
                 null,
@@ -968,6 +1025,7 @@ class MediaRepository(private val context: Context) {
                 val mimeIdx = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE)
                 val sizeIdx = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
                 val dateIdx = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
+                val dataIdx = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
                 while (cursor.moveToNext()) {
                     val name = cursor.getString(nameIdx).orEmpty()
                     val mime = cursor.getString(mimeIdx)
@@ -988,6 +1046,7 @@ class MediaRepository(private val context: Context) {
                         dateModified = cursor.getLong(dateIdx) * 1000,
                         type = type,
                         volumeId = volumeId,
+                        filePath = if (dataIdx >= 0) cursor.getString(dataIdx) else null,
                     )
                 }
             }
@@ -1022,6 +1081,10 @@ class MediaRepository(private val context: Context) {
             if (durationColumn != null) add(durationColumn)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 add(MediaStore.MediaColumns.RELATIVE_PATH)
+                add(MediaStore.MediaColumns.IS_PENDING)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                add(MediaStore.MediaColumns.IS_TRASHED)
             }
         }.toTypedArray()
         val items = ArrayList<MediaItem>()
@@ -1042,15 +1105,20 @@ class MediaRepository(private val context: Context) {
                 val bucketNameIdx = cursor.getColumnIndexOrThrow(bucketNameColumn)
                 val durationIdx = durationColumn?.let { cursor.getColumnIndex(it) } ?: -1
                 val relativeIdx = cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
+                val pendingIdx = cursor.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
+                val trashedIdx = cursor.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idIdx)
                     val uri = ContentUris.withAppendedId(collection, id)
+                    val name = cursor.getString(nameIdx).orEmpty()
                     val relativePath = if (relativeIdx >= 0) cursor.getString(relativeIdx) else null
-                    val parentPath = parentPathOf(null, relativePath, volumePath)
+                    if (pendingIdx >= 0 && cursor.getInt(pendingIdx) != 0) continue
+                    if (trashedIdx >= 0 && cursor.getInt(trashedIdx) != 0) continue
+                    if (shouldSkipName(name) || shouldSkipRelativePath(relativePath)) continue
                     items += MediaItem(
-                        id = "${type.name}-$id",
+                        id = "${type.name}-$volumeId-$id",
                         uri = uri,
-                        name = cursor.getString(nameIdx).orEmpty(),
+                        name = name,
                         mimeType = cursor.getString(mimeIdx),
                         size = cursor.getLong(sizeIdx),
                         dateModified = cursor.getLong(dateIdx) * 1000,
@@ -1059,7 +1127,7 @@ class MediaRepository(private val context: Context) {
                         bucketId = cursor.getLong(bucketIdIdx).toString(),
                         bucketName = cursor.getString(bucketNameIdx),
                         volumeId = volumeId,
-                        filePath = parentPath,
+                        filePath = mediaFilePath(null, relativePath, name, volumePath),
                     )
                 }
             }
@@ -1078,6 +1146,7 @@ class MediaRepository(private val context: Context) {
         }
         for (file in children) {
             if (out.size >= MAX_SAF_FILES) return
+            if (shouldSkipName(file.name)) continue
             if (file.isDirectory) {
                 walk(file, out)
                 continue
@@ -1108,6 +1177,82 @@ class MediaRepository(private val context: Context) {
         return null
     }
 
+    private fun mediaFilePath(
+        dataPath: String?,
+        relativePath: String?,
+        name: String,
+        volumePath: String?,
+    ): String? {
+        if (!dataPath.isNullOrBlank()) return dataPath
+        val parent = parentPathOf(null, relativePath, volumePath) ?: return null
+        if (name.isBlank()) return parent
+        return File(parent, name).absolutePath
+    }
+
+    private fun mergeLibraryFiles(
+        mediaStoreFiles: List<MediaItem>,
+        scannedFiles: List<MediaItem>,
+    ): List<MediaItem> {
+        val seen = HashSet<String>()
+        val out = ArrayList<MediaItem>(mediaStoreFiles.size + scannedFiles.size)
+        fun add(item: MediaItem) {
+            val keys = identityKeys(item)
+            if (keys.any { it in seen }) return
+            seen.addAll(keys)
+            out += item
+        }
+        mediaStoreFiles.forEach(::add)
+        scannedFiles.forEach(::add)
+        return out.sortedByDescending { it.dateModified }
+    }
+
+    private fun identityKeys(item: MediaItem): List<String> {
+        val keys = ArrayList<String>(3)
+        keys += "uri:${item.uri}"
+        resolvedFilePath(item)?.let { keys += "path:${normalizePath(it)}" }
+        return keys
+    }
+
+    private fun resolvedFilePath(item: MediaItem): String? {
+        val path = item.filePath ?: return null
+        val file = File(path)
+        if (file.isFile) return file.absolutePath
+        if (file.isDirectory && item.name.isNotBlank()) {
+            return File(file, item.name).absolutePath
+        }
+        return path.takeIf { it.substringAfterLast('/') == item.name || it.endsWith("/${item.name}") }
+    }
+
+    private fun normalizePath(path: String): String {
+        var value = path.replace('\\', '/').lowercase()
+        value = value.removePrefix("/sdcard")
+        value = value.removePrefix("/storage/emulated/0")
+        value = value.removePrefix("/storage/self/primary")
+        return value.trimEnd('/')
+    }
+
+    private fun shouldSkip(file: File): Boolean {
+        if (shouldSkipName(file.name)) return true
+        if (!file.isDirectory) return false
+        val parent = file.parentFile?.name
+        return (file.name.equals("data", true) || file.name.equals("obb", true)) &&
+            parent.equals("Android", true)
+    }
+
+    private fun shouldSkipName(name: String?): Boolean {
+        if (name.isNullOrBlank()) return true
+        if (name.startsWith(".")) return true
+        return name.equals("thumbnails", true) ||
+            name.equals("cache", true) ||
+            name.equals("lost.dir", true) ||
+            name.equals("lost+found", true)
+    }
+
+    private fun shouldSkipRelativePath(relativePath: String?): Boolean {
+        if (relativePath.isNullOrBlank()) return false
+        return relativePath.split('/').any { it.isNotEmpty() && shouldSkipName(it) }
+    }
+
     fun resolveLocalPath(uri: Uri?, filePath: String?): String? {
         if (!filePath.isNullOrBlank()) {
             val file = File(filePath)
@@ -1134,13 +1279,23 @@ class MediaRepository(private val context: Context) {
     }
 
     fun readHtml(uri: Uri, filePath: String? = null): String {
-        resolveLocalPath(uri, filePath)?.let { path ->
-            return decodeText(File(path).readBytes())
-        }
-        val bytes = runCatching {
-            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-        }.getOrNull()
-        return if (bytes != null) decodeText(bytes) else ""
+        return runCatching {
+            val stream = resolveLocalPath(uri, filePath)?.let { path ->
+                val file = File(path)
+                if (!file.isFile) return@runCatching ""
+                file.inputStream()
+            } ?: context.contentResolver.openInputStream(uri)
+            stream?.use { input ->
+                val buffer = ByteArray(HTML_MAX_BYTES + 1)
+                var offset = 0
+                while (offset < buffer.size) {
+                    val read = input.read(buffer, offset, buffer.size - offset)
+                    if (read <= 0) break
+                    offset += read
+                }
+                decodeText(buffer.copyOf(minOf(offset, HTML_MAX_BYTES)))
+            }.orEmpty()
+        }.getOrDefault("")
     }
 
     private fun decodeText(bytes: ByteArray): String {
@@ -1204,6 +1359,7 @@ class MediaRepository(private val context: Context) {
 
     companion object {
         const val TEXT_MAX_BYTES = 512 * 1024
+        private const val HTML_MAX_BYTES = 2 * 1024 * 1024
         private const val PREFS_NAME = "media_center"
         private const val KEY_FOLDER_URI = "folder_uri"
         private const val KEY_FOLDER_URIS = "folder_uris"

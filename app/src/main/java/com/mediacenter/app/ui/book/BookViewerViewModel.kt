@@ -88,7 +88,8 @@ class BookViewerViewModel(
     fun prevChapter() = moveChapter(-1)
 
     fun jumpTo(index: Int) {
-        val chapters = book?.chapters ?: return
+        val chapters = book?.chapters.orEmpty()
+        if (chapters.isEmpty()) return
         showChapter(index.coerceIn(0, chapters.lastIndex), 0)
     }
 
@@ -125,6 +126,14 @@ class BookViewerViewModel(
 
     private fun showChapter(index: Int, restoreScroll: Int) {
         val current = book ?: return
+        if (current.chapters.isEmpty()) {
+            _uiState.value = BookUiState(
+                title = current.title.ifBlank { fallbackTitle },
+                loading = false,
+                error = "没有可读章节",
+            )
+            return
+        }
         val safeIndex = index.coerceIn(0, current.chapters.lastIndex)
         val chapter = current.chapters[safeIndex]
         scrollY = restoreScroll
@@ -147,7 +156,13 @@ class BookViewerViewModel(
     }
 
     private fun styledHtml(file: java.io.File): String {
-        val raw = runCatching { file.readText() }.getOrDefault("")
+        val raw = runCatching {
+            file.inputStream().use { input ->
+                val buffer = ByteArray(CHAPTER_MAX_BYTES)
+                val read = input.read(buffer)
+                if (read <= 0) "" else String(buffer, 0, read, Charsets.UTF_8)
+            }
+        }.getOrDefault("")
         val style = if (useBookCss) {
             "<style>img,svg,video{max-width:100%;height:auto;}body{margin:16px;}mark{background:#FFE082;color:#111;}</style>"
         } else {
@@ -164,5 +179,6 @@ class BookViewerViewModel(
         const val EXTRA_URI = "uri"
         const val EXTRA_TITLE = "title"
         const val EXTRA_FILE_PATH = "file_path"
+        private const val CHAPTER_MAX_BYTES = 2 * 1024 * 1024
     }
 }

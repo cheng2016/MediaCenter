@@ -68,19 +68,30 @@ object EpubLoader {
     }
 
     private fun unzip(source: File, dest: File) {
+        val root = dest.canonicalFile
+        var written = 0L
         ZipFile(source).use { zip ->
             val entries = zip.entries()
             while (entries.hasMoreElements()) {
                 val entry = entries.nextElement()
-                val out = File(dest, entry.name).canonicalFile
-                if (!out.path.startsWith(dest.canonicalPath)) continue
+                val out = File(root, entry.name).canonicalFile
+                if (out != root && !out.path.startsWith(root.path + File.separator)) continue
                 if (entry.isDirectory) {
                     out.mkdirs()
                     continue
                 }
                 out.parentFile?.mkdirs()
                 zip.getInputStream(entry).use { input ->
-                    FileOutputStream(out).use { output -> input.copyTo(output) }
+                    FileOutputStream(out).use { output ->
+                        val buffer = ByteArray(16 * 1024)
+                        while (true) {
+                            val n = input.read(buffer)
+                            if (n <= 0) break
+                            written += n
+                            if (written > MAX_UNZIP_BYTES) error("电子书太大")
+                            output.write(buffer, 0, n)
+                        }
+                    }
                 }
             }
         }
@@ -282,4 +293,6 @@ object EpubLoader {
         val properties: String,
         val mediaType: String,
     )
+
+    private const val MAX_UNZIP_BYTES = 200L * 1024 * 1024
 }

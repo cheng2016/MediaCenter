@@ -101,8 +101,9 @@ class WebViewerActivity : BaseActivity() {
     private fun loadHtmlFallback(html: String) {
         val uri = viewModel.uri
         val parent = uri?.let(::resolveParent)
+        val diskRoot = viewModel.extraFilePath?.let { File(it).parent }
         val assetLoader = WebViewAssetLoader.Builder()
-            .addPathHandler("/local/", DocumentPathHandler(this, parent, uri))
+            .addPathHandler("/local/", DocumentPathHandler(this, parent, uri, diskRoot))
             .build()
         binding.webView.webViewClient = object : LocalWebViewClient() {
             override fun shouldInterceptRequest(
@@ -127,13 +128,16 @@ class WebViewerActivity : BaseActivity() {
             DocumentFile.fromTreeUri(this, parentUri)?.let { tree ->
                 findParentOf(tree, uri)?.let { return it }
             }
-            DocumentFile.fromSingleUri(this, parentUri)?.let { return it }
+            DocumentFile.fromSingleUri(this, parentUri)
+                ?.takeIf { it.isDirectory }
+                ?.let { return it }
         }
-        return DocumentFile.fromSingleUri(this, uri)
+        return null
     }
 
     private fun findParentOf(dir: DocumentFile, target: Uri): DocumentFile? {
-        for (child in dir.listFiles()) {
+        val children = runCatching { dir.listFiles() }.getOrNull() ?: return null
+        for (child in children) {
             if (child.uri == target) return dir
             if (child.isDirectory) {
                 findParentOf(child, target)?.let { return it }
@@ -151,6 +155,19 @@ class WebViewerActivity : BaseActivity() {
         if (keyCode == KeyEvent.KEYCODE_BACK || keyCode == KeyEvent.KEYCODE_ESCAPE) {
             closeViewer()
             return true
+        }
+        if (::binding.isInitialized) {
+            val page = (binding.webView.height * 0.85f).toInt().coerceAtLeast(80)
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_CHANNEL_UP -> {
+                    binding.webView.scrollBy(0, -page)
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
+                    binding.webView.scrollBy(0, page)
+                    return true
+                }
+            }
         }
         return super.onKeyDown(keyCode, event)
     }
@@ -177,8 +194,13 @@ class WebViewerActivity : BaseActivity() {
         private val context: Context,
         private val parent: DocumentFile?,
         private val pageUri: Uri?,
+        private val diskRoot: String?,
     ) : WebViewAssetLoader.PathHandler {
         override fun handle(path: String): WebResourceResponse? {
+            return runCatching { open(path) }.getOrNull()
+        }
+
+        private fun open(path: String): WebResourceResponse? {
             val file = resolve(path) ?: return fileFromDisk(path)
             val mime = file.type
                 ?: MimeTypeMap.getSingleton()
@@ -190,13 +212,17 @@ class WebViewerActivity : BaseActivity() {
         }
 
         private fun fileFromDisk(path: String): WebResourceResponse? {
-            val parentPath = parent?.uri?.path ?: return null
-            val target = File(parentPath, path.trimStart('/'))
+            val parentPath = diskRoot ?: return null
+            val root = File(parentPath).canonicalFile
+            val target = File(root, path.trimStart('/')).canonicalFile
+            if (target != root && !target.path.startsWith(root.path + File.separator)) return null
             if (!target.isFile) return null
             val mime = MimeTypeMap.getSingleton()
                 .getMimeTypeFromExtension(target.extension.lowercase())
                 ?: "application/octet-stream"
-            return WebResourceResponse(mime, "utf-8", FileInputStream(target))
+            return runCatching {
+                WebResourceResponse(mime, "utf-8", FileInputStream(target))
+            }.getOrNull()
         }
 
         private fun resolve(path: String): DocumentFile? {
@@ -204,14 +230,14 @@ class WebViewerActivity : BaseActivity() {
             if (clean.isEmpty()) {
                 return pageUri?.let { DocumentFile.fromSingleUri(context, it) }
             }
-            var current = parent ?: return pageUri?.let { DocumentFile.fromSingleUri(context, it) }
+            var current = parent?.takeIf { it.isDirectory } ?: return null
             val parts = clean.split('/').filter { it.isNotEmpty() && it != "." }
             for (part in parts) {
                 if (part == "..") {
-                    current = current.parentFile ?: return null
+                    current = current.parentFile?.takeIf { it.isDirectory } ?: return null
                     continue
                 }
-                current = current.findFile(part) ?: return null
+                current = runCatching { current.findFile(part) }.getOrNull() ?: return null
             }
             return current
         }

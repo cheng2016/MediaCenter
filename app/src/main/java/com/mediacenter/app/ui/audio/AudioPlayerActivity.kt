@@ -5,10 +5,14 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyEvent
 import android.widget.SeekBar
+import com.mediacenter.app.ui.gallery.Dpad
 import androidx.activity.viewModels
 import com.mediacenter.app.ui.BaseActivity
 import androidx.media3.common.MediaItem
+import android.widget.Toast
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.bumptech.glide.Glide
@@ -60,6 +64,48 @@ class AudioPlayerActivity : BaseActivity() {
             }
         })
         bindCurrent()
+        Dpad.requestFocusIfRemote(binding.buttonPlay)
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val exo = player
+        return when {
+            (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+                keyCode == KeyEvent.KEYCODE_MEDIA_PLAY ||
+                keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE) && exo != null -> {
+                when (keyCode) {
+                    KeyEvent.KEYCODE_MEDIA_PAUSE -> exo.pause()
+                    KeyEvent.KEYCODE_MEDIA_PLAY -> exo.play()
+                    else -> exo.playWhenReady = !exo.isPlaying
+                }
+                bindPlayButton()
+                true
+            }
+            Dpad.isPrevious(keyCode) -> {
+                playRelative(-1)
+                true
+            }
+            Dpad.isNext(keyCode) -> {
+                playRelative(1)
+                true
+            }
+            Dpad.isSeekBack(keyCode) -> {
+                seekBy(-10_000L)
+                true
+            }
+            Dpad.isSeekForward(keyCode) -> {
+                seekBy(10_000L)
+                true
+            }
+            else -> super.onKeyDown(keyCode, event)
+        }
+    }
+
+    private fun seekBy(deltaMs: Long) {
+        val exo = player ?: return
+        val duration = exo.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+        exo.seekTo((exo.currentPosition + deltaMs).coerceIn(0L, duration))
+        updateProgress()
     }
 
     override fun onStart() {
@@ -81,6 +127,10 @@ class AudioPlayerActivity : BaseActivity() {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 bindPlayButton()
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                Toast.makeText(this@AudioPlayerActivity, R.string.media_open_failed, Toast.LENGTH_SHORT).show()
             }
         })
         handler.post(ticker)

@@ -85,13 +85,26 @@ class BookViewerActivity : BaseActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val page = (binding.webView.height * 0.85f).toInt().coerceAtLeast(80)
         return when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_PAGE_UP -> {
+            KeyEvent.KEYCODE_DPAD_LEFT -> {
                 viewModel.prevChapter()
                 true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_PAGE_DOWN -> {
+            KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 viewModel.nextChapter()
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_CHANNEL_UP -> {
+                binding.webView.scrollBy(0, -page)
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
+                binding.webView.scrollBy(0, page)
+                true
+            }
+            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO -> {
+                showToc()
                 true
             }
             else -> super.onKeyDown(keyCode, event)

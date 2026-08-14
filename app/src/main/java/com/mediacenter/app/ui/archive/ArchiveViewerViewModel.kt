@@ -32,7 +32,11 @@ class ArchiveViewerViewModel(
             return@withContext "unsupported"
         }
         zipFile = resolveZipFile()
-        if (zipFile == null) "failed" else null
+        val file = zipFile ?: return@withContext "failed"
+        runCatching { ZipFile(file).use { it.size() } }.fold(
+            onSuccess = { null },
+            onFailure = { "failed" },
+        )
     }
 
     fun canGoUp(): Boolean = dirStack.isNotEmpty()
@@ -110,10 +114,14 @@ class ArchiveViewerViewModel(
     suspend fun extract(item: MediaItem): MediaItem? = withContext(Dispatchers.IO) {
         val zip = zipFile ?: return@withContext null
         val entryPath = item.filePath ?: return@withContext null
-        val dest = File(
+        val root = File(
             getApplication<Application>().cacheDir,
-            "archive-extract/${zip.nameWithoutExtension}/$entryPath",
-        )
+            "archive-extract/${zip.nameWithoutExtension}",
+        ).canonicalFile
+        val dest = File(root, entryPath).canonicalFile
+        if (dest != root && !dest.path.startsWith(root.path + File.separator)) {
+            return@withContext null
+        }
         dest.parentFile?.mkdirs()
         val copied = runCatching {
             ZipFile(zip).use { archive ->

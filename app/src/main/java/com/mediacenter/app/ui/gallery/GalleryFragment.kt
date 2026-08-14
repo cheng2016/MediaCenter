@@ -45,11 +45,20 @@ class GalleryFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val viewModel: GalleryViewModel by viewModels()
-    private val adapter = MediaAdapter(::onItemClick, ::focusSidebar, ::showFileMenu)
+    private val adapter = MediaAdapter(::onItemClick, ::focusSidebar, ::showFileMenu, ::focusToolbar)
     private val navAdapter = NavAdapter(::onNavSelected, ::focusContent)
     private var requestedInitialFocus = false
     private val listLayout by lazy { LinearLayoutManager(requireContext()) }
-    private val gridLayout by lazy { GridLayoutManager(requireContext(), 3) }
+    private val albumLayout by lazy { GridLayoutManager(requireContext(), 2) }
+    private val gridLayout by lazy {
+        GridLayoutManager(requireContext(), 4).apply {
+            spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+                override fun getSpanSize(position: Int): Int {
+                    return if (adapter.isFullSpan(position)) spanCount else 1
+                }
+            }
+        }
+    }
     private var pendingVolumeId: String? = null
 
     private val storageReceiver = object : BroadcastReceiver() {
@@ -136,6 +145,24 @@ class GalleryFragment : Fragment() {
         binding.buttonSort.setOnClickListener { showSortMenu() }
         binding.buttonEmptyAddFolder.setOnClickListener { viewModel.requestUsbAccess() }
         binding.buttonPermission.setOnClickListener { requestStorageAccess() }
+        listOf(
+            binding.buttonToggleSidebar,
+            binding.buttonBack,
+            binding.buttonCreate,
+            binding.buttonAddFolder,
+            binding.buttonSort,
+        ).forEach { button ->
+            button.setOnKeyListener { _, keyCode, event ->
+                if (event.action == android.view.KeyEvent.ACTION_DOWN &&
+                    keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN
+                ) {
+                    focusContent()
+                    true
+                } else {
+                    false
+                }
+            }
+        }
         binding.searchInput.doAfterTextChanged { viewModel.setSearchQuery(it?.toString().orEmpty()) }
 
         viewLifecycleOwner.lifecycleScope.launch {
@@ -210,12 +237,19 @@ class GalleryFragment : Fragment() {
     private fun render(state: GalleryUiState) {
         navAdapter.submit(state.navItems, state.selectedNavId)
         adapter.listMode = state.listMode
-        adapter.submitList(state.items)
+        adapter.albumCards = state.albumCards
+        adapter.submitMedia(state.items, state.groupByDate)
         if (!requestedInitialFocus && state.navItems.isNotEmpty()) {
             requestedInitialFocus = true
-            binding.navList.post { focusSidebar() }
+            if (!binding.navList.isInTouchMode) {
+                binding.navList.post { focusSidebar() }
+            }
         }
-        val manager = if (state.listMode) listLayout else gridLayout
+        val manager = when {
+            state.listMode -> listLayout
+            state.albumCards -> albumLayout
+            else -> gridLayout
+        }
         if (binding.contentList.layoutManager != manager) {
             binding.contentList.layoutManager = manager
         }
@@ -250,6 +284,8 @@ class GalleryFragment : Fragment() {
                 state.filter == MediaFilter.RECENT -> R.drawable.ic_nav_recent
                 state.filter == MediaFilter.FAVORITE -> R.drawable.ic_nav_favorite
                 state.filter == MediaFilter.SEARCH -> R.drawable.ic_nav_search
+                state.filter == MediaFilter.IMAGE -> R.drawable.ic_nav_image
+                state.filter == MediaFilter.VIDEO -> R.drawable.ic_nav_video
                 else -> R.drawable.ic_nav_text
             },
         )
@@ -267,6 +303,8 @@ class GalleryFragment : Fragment() {
             state.filter == MediaFilter.SEARCH && state.searchQuery.isBlank() ->
                 getString(R.string.empty_search)
             state.filter == MediaFilter.SEARCH -> getString(R.string.empty_search_none)
+            state.filter == MediaFilter.IMAGE -> getString(R.string.empty_image)
+            state.filter == MediaFilter.VIDEO -> getString(R.string.empty_video)
             state.currentFolder != null && state.searchQuery.isNotBlank() ->
                 getString(R.string.empty_search_none)
             state.showingFolders -> getString(R.string.empty_folders)
@@ -360,6 +398,7 @@ class GalleryFragment : Fragment() {
         popup.menu.findItem(R.id.sort_name).isChecked = state.sortMode == SortMode.NAME
         popup.menu.findItem(R.id.sort_date).isChecked = state.sortMode == SortMode.DATE
         popup.menu.findItem(R.id.sort_type).isChecked = state.sortMode == SortMode.TYPE
+        popup.menu.findItem(R.id.sort_view_mode).isVisible = state.canToggleView
         popup.menu.findItem(R.id.sort_view_mode).title =
             if (state.listMode) getString(R.string.view_grid) else getString(R.string.view_list)
         popup.setOnMenuItemClickListener { item ->
@@ -392,11 +431,21 @@ class GalleryFragment : Fragment() {
         Dpad.focusPosition(binding.navList, navAdapter.selectedIndex)
     }
 
+    private fun focusToolbar() {
+        if (_binding == null) return
+        when {
+            binding.buttonSort.isVisible -> binding.buttonSort.requestFocus()
+            binding.buttonAddFolder.isVisible -> binding.buttonAddFolder.requestFocus()
+            binding.buttonCreate.isVisible -> binding.buttonCreate.requestFocus()
+            binding.buttonToggleSidebar.isVisible -> binding.buttonToggleSidebar.requestFocus()
+        }
+    }
+
     private fun focusContent() {
         if (_binding == null) return
         when {
             binding.contentList.isVisible && adapter.itemCount > 0 -> {
-                Dpad.focusPosition(binding.contentList, 0)
+                Dpad.focusPosition(binding.contentList, adapter.firstFocusablePosition())
             }
             binding.searchInput.isVisible -> binding.searchInput.requestFocus()
             binding.buttonEmptyAddFolder.isVisible -> binding.buttonEmptyAddFolder.requestFocus()
@@ -410,7 +459,7 @@ class GalleryFragment : Fragment() {
         val id = viewModel.consumeLastOpenedItemId() ?: return
         binding.contentList.post {
             if (_binding == null) return@post
-            val index = adapter.currentList.indexOfFirst { it.id == id }
+            val index = adapter.indexOfItem(id)
             if (index >= 0 && binding.contentList.isVisible) {
                 Dpad.focusPosition(binding.contentList, index)
             }
