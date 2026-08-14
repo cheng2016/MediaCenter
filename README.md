@@ -20,6 +20,20 @@
   · 手机 / 平板 / 电视
 </p>
 
+<p align="center">
+  <img src="docs/images/screenshot-home.png" alt="浏览内部存储" width="860" />
+</p>
+
+<p align="center">
+  <img src="docs/images/screenshot-folder.png" alt="文件夹里的网页和文件" width="420" />
+  &nbsp;
+  <img src="docs/images/screenshot-web.png" alt="内置网页查看" width="420" />
+</p>
+
+<p align="center">
+  <sub>左侧菜单 · 文件夹列出全部文件 · 本地网页用内置页面打开</sub>
+</p>
+
 ---
 
 ## 为什么用它
