@@ -5,8 +5,8 @@
 不登录，不上云，不追踪。插上 U 盘就能看；电视遥控器也能用。
 
 <p align="center">
-  <a href="https://github.com/cheng2016/MediaCenter/releases/latest/download/MediaCenter-1.0.1.apk">
-    <img src="https://img.shields.io/badge/下载_APK-1.0.1-1A73E8?style=for-the-badge" alt="下载 APK" />
+  <a href="https://github.com/cheng2016/MediaCenter/releases/latest/download/MediaCenter-1.0.2.apk">
+    <img src="https://img.shields.io/badge/下载_APK-1.0.2-1A73E8?style=for-the-badge" alt="下载 APK" />
   </a>
   &nbsp;
   <a href="https://github.com/cheng2016/MediaCenter/releases/latest">
@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/cheng2016/MediaCenter/releases/latest/download/MediaCenter-1.0.1.apk"><b>立即下载 APK</b></a>
+  <a href="https://github.com/cheng2016/MediaCenter/releases/latest/download/MediaCenter-1.0.2.apk"><b>立即下载 APK</b></a>
   · Android 7.0+
   · 手机 / 平板 / 电视
 </p>
@@ -84,7 +84,7 @@
 
 ## 怎么用
 
-1. [下载 APK](https://github.com/cheng2016/MediaCenter/releases/latest/download/MediaCenter-1.0.1.apk) 并安装（需允许未知来源）
+1. [下载 APK](https://github.com/cheng2016/MediaCenter/releases/latest/download/MediaCenter-1.0.2.apk) 并安装（需允许未知来源）
 2. 打开后授予 **全部文件访问**，才能看到网页、文本和 U 盘里的全部文件
 3. 左侧选「内部存储」或 U 盘，进入文件夹浏览
 4. 点网页文件，会用应用内置页面打开，返回键回到刚才的列表
@@ -95,7 +95,7 @@
 
 安装包放在 [GitHub Releases](https://github.com/cheng2016/MediaCenter/releases/latest)，不进源码仓库。
 
-- 最新包：[MediaCenter-1.0.1.apk](https://github.com/cheng2016/MediaCenter/releases/latest/download/MediaCenter-1.0.1.apk)
+- 最新包：[MediaCenter-1.0.2.apk](https://github.com/cheng2016/MediaCenter/releases/latest/download/MediaCenter-1.0.2.apk)
 - 历史版本：https://github.com/cheng2016/MediaCenter/releases
 
 ## 自己编译
